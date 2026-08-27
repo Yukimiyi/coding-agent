@@ -12,6 +12,14 @@ deepseek:
   thinking-enabled: ${DEEPSEEK_THINKING_ENABLED:false}
 
 agent:
+  loop:
+    max-iterations: 8
+    max-tool-calls-per-iteration: 8
+    trace-content-limit: 4000
+    system-prompt: >
+      You are a coding agent operating inside a restricted workspace. Inspect relevant files before making changes.
+      Use only the provided tools, always use workspace-relative paths, and set overwrite=true only after reading an
+      existing file. When the task is complete, respond with a concise summary and any verification performed.
   workspace:
     root: ${CODING_AGENT_WORKSPACE:${user.dir}}
     max-read-bytes: 1048576
