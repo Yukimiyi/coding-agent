@@ -1,8 +1,11 @@
 package com.yukina.codingagent.controller;
 
-import com.yukina.codingagent.deepseek.DeepSeekChatRequest;
 import com.yukina.codingagent.deepseek.DeepSeekChatResponse;
 import com.yukina.codingagent.deepseek.DeepSeekClient;
+import com.yukina.codingagent.deepseek.DeepSeekMessage;
+import com.yukina.codingagent.deepseek.DeepSeekToolCall;
+import com.yukina.codingagent.deepseek.DeepSeekToolDefinition;
+import com.yukina.codingagent.tool.ToolRegistry;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,9 +21,11 @@ import java.util.List;
 public class DeepSeekChatController {
 
     private final DeepSeekClient deepSeekClient;
+    private final ToolRegistry toolRegistry;
 
-    public DeepSeekChatController(DeepSeekClient deepSeekClient) {
+    public DeepSeekChatController(DeepSeekClient deepSeekClient, ToolRegistry toolRegistry) {
         this.deepSeekClient = deepSeekClient;
+        this.toolRegistry = toolRegistry;
     }
 
     @PostMapping("/chat")
@@ -31,7 +36,7 @@ public class DeepSeekChatController {
         }
 
         DeepSeekChatResponse response = deepSeekClient.chat(List.of(
-                new DeepSeekChatRequest.Message("user", request.message())
+                DeepSeekMessage.user(request.message())
         ));
 
         return new ChatResponse(
@@ -39,6 +44,32 @@ public class DeepSeekChatController {
                 response.model(),
                 response.firstContent(),
                 response.usage()
+        );
+    }
+
+    @PostMapping("/tool-call")
+    @ResponseStatus(HttpStatus.OK)
+    public ToolCallResponse toolCall(@RequestBody ToolCallRequest request) {
+        if (request == null || request.message() == null || request.message().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "message must not be blank");
+        }
+        List<DeepSeekToolDefinition> tools = request.tools() == null || request.tools().isEmpty()
+                ? toolRegistry.definitions()
+                : request.tools();
+
+        DeepSeekChatResponse response = deepSeekClient.chat(
+                List.of(DeepSeekMessage.user(request.message())),
+                tools
+        );
+        DeepSeekMessage message = response.firstMessage();
+
+        return new ToolCallResponse(
+                response.id(),
+                response.model(),
+                message.content(),
+                message.reasoningContent(),
+                message.toolCalls(),
+                response.choices().getFirst().finishReason()
         );
     }
 
@@ -50,6 +81,22 @@ public class DeepSeekChatController {
             String model,
             String content,
             DeepSeekChatResponse.Usage usage
+    ) {
+    }
+
+    public record ToolCallRequest(
+            String message,
+            List<DeepSeekToolDefinition> tools
+    ) {
+    }
+
+    public record ToolCallResponse(
+            String id,
+            String model,
+            String content,
+            String reasoningContent,
+            List<DeepSeekToolCall> toolCalls,
+            String finishReason
     ) {
     }
 }

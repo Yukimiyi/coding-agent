@@ -25,14 +25,23 @@ public class DeepSeekClient {
                 .build();
     }
 
-    public DeepSeekChatResponse chat(List<DeepSeekChatRequest.Message> messages) {
+    public DeepSeekChatResponse chat(List<DeepSeekMessage> messages) {
+        return chat(messages, List.of());
+    }
+
+    public DeepSeekChatResponse chat(
+            List<DeepSeekMessage> messages,
+            List<DeepSeekToolDefinition> tools
+    ) {
         if (messages == null || messages.isEmpty()) {
             throw new IllegalArgumentException("messages must not be empty");
         }
+        List<DeepSeekToolDefinition> safeTools = tools == null ? List.of() : List.copyOf(tools);
 
         DeepSeekChatRequest requestBody = new DeepSeekChatRequest(
                 properties.model(),
                 List.copyOf(messages),
+                safeTools,
                 new DeepSeekChatRequest.Thinking(properties.thinkingEnabled() ? "enabled" : "disabled"),
                 false
         );

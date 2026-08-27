@@ -11,6 +11,16 @@ deepseek:
   request-timeout: ${DEEPSEEK_REQUEST_TIMEOUT:120s}
   thinking-enabled: ${DEEPSEEK_THINKING_ENABLED:false}
 
+agent:
+  workspace:
+    root: ${CODING_AGENT_WORKSPACE:${user.dir}}
+    max-read-bytes: 1048576
+    max-write-bytes: 1048576
+    max-list-entries: 500
+    max-search-results: 200
+    max-search-file-bytes: 1048576
+    max-depth: 10
+
 server:
   port: 8123
   servlet:

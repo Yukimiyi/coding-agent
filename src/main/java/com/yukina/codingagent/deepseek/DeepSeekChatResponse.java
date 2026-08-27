@@ -14,25 +14,21 @@ public record DeepSeekChatResponse(
 ) {
 
     public String firstContent() {
+        return firstMessage().content();
+    }
+
+    public DeepSeekMessage firstMessage() {
         if (choices == null || choices.isEmpty() || choices.getFirst().message() == null) {
             throw new DeepSeekApiException("DeepSeek API returned no choices", null);
         }
-        return choices.getFirst().message().content();
+        return choices.getFirst().message();
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Choice(
             int index,
-            Message message,
+            DeepSeekMessage message,
             @JsonProperty("finish_reason") String finishReason
-    ) {
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Message(
-            String role,
-            String content,
-            @JsonProperty("reasoning_content") String reasoningContent
     ) {
     }
 
