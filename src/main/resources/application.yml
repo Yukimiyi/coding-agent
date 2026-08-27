@@ -1,6 +1,16 @@
 spring:
   application:
     name: coding-agent
+  config:
+    import: optional:classpath:application-local.yml
+
+deepseek:
+  base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+  api-key: ${DEEPSEEK_API_KEY:}
+  model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
+  request-timeout: ${DEEPSEEK_REQUEST_TIMEOUT:120s}
+  thinking-enabled: ${DEEPSEEK_THINKING_ENABLED:false}
+
 server:
   port: 8123
   servlet:

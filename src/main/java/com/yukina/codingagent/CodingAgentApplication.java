@@ -2,9 +2,11 @@ package com.yukina.codingagent;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 @SpringBootApplication
-public class  CodingAgentApplication {
+@ConfigurationPropertiesScan
+public class CodingAgentApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(CodingAgentApplication.class, args);
