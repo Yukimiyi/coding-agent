@@ -33,12 +33,18 @@ public class AgentLoop {
     }
 
     public AgentRunResult run(String task) {
+        return run(task, List.of());
+    }
+
+    public AgentRunResult run(String task, List<DeepSeekMessage> conversationHistory) {
         if (task == null || task.isBlank()) {
             throw new IllegalArgumentException("task must not be blank");
         }
+        List<DeepSeekMessage> safeHistory = validateHistory(conversationHistory);
 
         List<DeepSeekMessage> messages = new ArrayList<>();
         messages.add(DeepSeekMessage.system(properties.systemPrompt()));
+        messages.addAll(safeHistory);
         messages.add(DeepSeekMessage.user(task));
         List<AgentRunResult.ToolStep> toolSteps = new ArrayList<>();
         UsageAccumulator usage = new UsageAccumulator();
@@ -113,6 +119,19 @@ public class AgentLoop {
                 toolSteps,
                 usage
         );
+    }
+
+    private static List<DeepSeekMessage> validateHistory(List<DeepSeekMessage> history) {
+        if (history == null) {
+            return List.of();
+        }
+        List<DeepSeekMessage> safeHistory = List.copyOf(history);
+        boolean containsUnsupportedRole = safeHistory.stream().anyMatch(message -> message == null
+                || !("user".equals(message.role()) || "assistant".equals(message.role())));
+        if (containsUnsupportedRole) {
+            throw new IllegalArgumentException("conversation history may only contain user and assistant messages");
+        }
+        return safeHistory;
     }
 
     private AgentRunResult.ToolStep toToolStep(
