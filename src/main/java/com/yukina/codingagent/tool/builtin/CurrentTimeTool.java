@@ -13,6 +13,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+/**
+ * 返回服务器当前本地时间和时区的只读工具。
+ */
 @Component
 public class CurrentTimeTool implements AgentTool {
 
@@ -28,15 +31,18 @@ public class CurrentTimeTool implements AgentTool {
 
     private final ObjectMapper objectMapper;
 
+    /** 创建当前时间工具。 */
     public CurrentTimeTool(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
     }
 
+    /** {@inheritDoc} */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
     }
 
+    /** {@inheritDoc} */
     @Override
     public String execute(JsonNode arguments) {
         if (arguments.size() > 0) {

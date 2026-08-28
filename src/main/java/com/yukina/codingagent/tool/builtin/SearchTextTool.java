@@ -34,6 +34,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
+/**
+ * 在工作区 UTF-8 文件中执行文本或正则表达式搜索。
+ */
 @Component
 public class SearchTextTool implements AgentTool {
 
@@ -61,6 +64,7 @@ public class SearchTextTool implements AgentTool {
     private final WorkspaceProperties properties;
     private final ObjectMapper objectMapper;
 
+    /** 创建文本搜索工具。 */
     public SearchTextTool(
             WorkspacePathResolver pathResolver,
             WorkspaceProperties properties,
@@ -71,11 +75,15 @@ public class SearchTextTool implements AgentTool {
         this.objectMapper = objectMapper;
     }
 
+    /** {@inheritDoc} */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
     }
 
+    /**
+     * 按文件模式、深度和结果数量限制搜索文本。
+     */
     @Override
     public String execute(JsonNode arguments) {
         String query = ToolArguments.requiredText(arguments, "query");
@@ -123,6 +131,9 @@ public class SearchTextTool implements AgentTool {
         return ToolJson.serialize(objectMapper, result);
     }
 
+    /**
+     * 遍历目录并在达到结果上限后提前终止。
+     */
     private void searchDirectory(
             Path start,
             int depth,
@@ -133,6 +144,7 @@ public class SearchTextTool implements AgentTool {
             AtomicInteger skippedFiles
     ) throws IOException {
         Files.walkFileTree(start, java.util.Set.of(), depth, new SimpleFileVisitor<>() {
+            /** 在遍历前跳过排除目录。 */
             @Override
             public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
                 if (!directory.equals(start) && WorkspaceFilePolicy.isExcludedDirectory(directory)) {
@@ -141,6 +153,7 @@ public class SearchTextTool implements AgentTool {
                 return FileVisitResult.CONTINUE;
             }
 
+            /** 搜索符合条件的普通文件。 */
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
                 if (attributes.isRegularFile()) {
@@ -151,6 +164,9 @@ public class SearchTextTool implements AgentTool {
         });
     }
 
+    /**
+     * 逐行搜索单个文件；超大或非 UTF-8 文件计入跳过数量。
+     */
     private void searchFile(
             Path file,
             PathMatcher fileMatcher,
@@ -186,6 +202,7 @@ public class SearchTextTool implements AgentTool {
         }
     }
 
+    /** 将普通文本或正则查询编译为搜索模式。 */
     private static Pattern compilePattern(String query, boolean regex, boolean caseSensitive) {
         int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
         try {
@@ -195,6 +212,7 @@ public class SearchTextTool implements AgentTool {
         }
     }
 
+    /** 编译文件名 Glob，并转换无效模式异常。 */
     private static PathMatcher compileFileMatcher(String glob) {
         if (glob.isBlank()) {
             throw new ToolExecutionException("INVALID_ARGUMENTS", "file_pattern must not be blank");
@@ -206,10 +224,12 @@ public class SearchTextTool implements AgentTool {
         }
     }
 
+    /** 截断过长匹配行，限制工具返回体大小。 */
     private static String abbreviate(String line) {
         return line.length() <= MAX_LINE_LENGTH ? line : line.substring(0, MAX_LINE_LENGTH) + "...";
     }
 
+    /** 单个文本匹配位置及其行内容摘要。 */
     public record Match(String path, int line, int column, String text) {
     }
 }

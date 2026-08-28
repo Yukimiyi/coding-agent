@@ -20,6 +20,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 在大小限制内读取工作区 UTF-8 文本文件。
+ */
 @Component
 public class ReadFileTool implements AgentTool {
 
@@ -43,6 +46,7 @@ public class ReadFileTool implements AgentTool {
     private final WorkspaceProperties properties;
     private final ObjectMapper objectMapper;
 
+    /** 创建文件读取工具。 */
     public ReadFileTool(
             WorkspacePathResolver pathResolver,
             WorkspaceProperties properties,
@@ -53,11 +57,15 @@ public class ReadFileTool implements AgentTool {
         this.objectMapper = objectMapper;
     }
 
+    /** {@inheritDoc} */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
     }
 
+    /**
+     * 读取文件并拒绝目录、超大文件、二进制内容和非 UTF-8 文本。
+     */
     @Override
     public String execute(JsonNode arguments) {
         Path path = pathResolver.resolveExisting(ToolArguments.requiredText(arguments, "path"));

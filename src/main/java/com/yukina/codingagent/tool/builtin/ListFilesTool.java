@@ -26,6 +26,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 在工作区中列出文件和目录，不跟随符号链接。
+ */
 @Component
 public class ListFilesTool implements AgentTool {
 
@@ -66,6 +69,7 @@ public class ListFilesTool implements AgentTool {
     private final WorkspaceProperties properties;
     private final ObjectMapper objectMapper;
 
+    /** 创建目录列表工具。 */
     public ListFilesTool(
             WorkspacePathResolver pathResolver,
             WorkspaceProperties properties,
@@ -76,11 +80,15 @@ public class ListFilesTool implements AgentTool {
         this.objectMapper = objectMapper;
     }
 
+    /** {@inheritDoc} */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
     }
 
+    /**
+     * 按深度和数量上限遍历目录，并跳过构建产物目录。
+     */
     @Override
     public String execute(JsonNode arguments) {
         Path start = pathResolver.resolveExisting(ToolArguments.optionalText(arguments, "path", "."));
@@ -103,6 +111,7 @@ public class ListFilesTool implements AgentTool {
 
         try {
             Files.walkFileTree(start, java.util.Set.of(), depth, new SimpleFileVisitor<>() {
+                /** 在进入目录前应用排除策略和数量限制。 */
                 @Override
                 public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
                     if (!directory.equals(start)) {
@@ -116,6 +125,7 @@ public class ListFilesTool implements AgentTool {
                     return FileVisitResult.CONTINUE;
                 }
 
+                /** 收集普通文件、符号链接和其他文件类型。 */
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
                     return addEntry(entries, file, attributes, limit)
@@ -139,6 +149,9 @@ public class ListFilesTool implements AgentTool {
         return ToolJson.serialize(objectMapper, result);
     }
 
+    /**
+     * 将一个文件系统对象转换为列表项，并报告是否已超过返回上限。
+     */
     private boolean addEntry(List<Entry> entries, Path path, BasicFileAttributes attributes, int limit) {
         String type;
         Long size = null;
@@ -166,6 +179,7 @@ public class ListFilesTool implements AgentTool {
         return entries.size() > limit;
     }
 
+    /** 目录列表中的单个文件系统对象。 */
     public record Entry(String path, String type, Long size, Instant modifiedAt) {
     }
 }

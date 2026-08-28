@@ -24,6 +24,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 在工作区内创建或原子覆盖 UTF-8 文本文件。
+ */
 @Component
 public class WriteFileTool implements AgentTool {
 
@@ -56,6 +59,7 @@ public class WriteFileTool implements AgentTool {
     private final WorkspaceProperties properties;
     private final ObjectMapper objectMapper;
 
+    /** 创建文件写入工具。 */
     public WriteFileTool(
             WorkspacePathResolver pathResolver,
             WorkspaceProperties properties,
@@ -66,11 +70,15 @@ public class WriteFileTool implements AgentTool {
         this.objectMapper = objectMapper;
     }
 
+    /** {@inheritDoc} */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
     }
 
+    /**
+     * 写入完整文件内容，并执行大小、覆盖权限和路径边界校验。
+     */
     @Override
     public String execute(JsonNode arguments) {
         String content = ToolArguments.requiredText(arguments, "content", true);
@@ -118,6 +126,9 @@ public class WriteFileTool implements AgentTool {
         }
     }
 
+    /**
+     * 先写临时文件再替换目标，平台不支持原子移动时使用普通替换。
+     */
     private static void atomicWrite(Path path, String content) throws IOException {
         Path temporary = Files.createTempFile(path.getParent(), ".coding-agent-", ".tmp");
         try {

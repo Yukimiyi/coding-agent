@@ -3,6 +3,14 @@ spring:
     name: coding-agent
   config:
     import: optional:classpath:application-local.yml
+  datasource:
+    url: ${CODING_AGENT_DB_URL:jdbc:h2:file:./data/coding-agent;DB_CLOSE_ON_EXIT=FALSE}
+    username: ${CODING_AGENT_DB_USERNAME:sa}
+    password: ${CODING_AGENT_DB_PASSWORD:}
+    driver-class-name: org.h2.Driver
+  sql:
+    init:
+      mode: always
 
 deepseek:
   base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
@@ -12,6 +20,11 @@ deepseek:
   thinking-enabled: ${DEEPSEEK_THINKING_ENABLED:false}
 
 agent:
+  context:
+    max-messages: 20
+    max-content-chars: 16000
+    ttl: 30m
+    max-cached-conversations: 1000
   loop:
     max-iterations: 8
     max-tool-calls-per-iteration: 8

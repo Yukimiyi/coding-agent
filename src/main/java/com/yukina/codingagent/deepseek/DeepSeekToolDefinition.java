@@ -2,11 +2,20 @@ package com.yukina.codingagent.deepseek;
 
 import java.util.Map;
 
+/**
+ * 发送给 DeepSeek 的工具定义。
+ *
+ * @param type 工具类型
+ * @param function 函数定义
+ */
 public record DeepSeekToolDefinition(
         String type,
         FunctionDefinition function
 ) {
 
+    /**
+     * 校验并创建函数工具定义。
+     */
     public static DeepSeekToolDefinition function(
             String name,
             String description,
@@ -27,6 +36,9 @@ public record DeepSeekToolDefinition(
         );
     }
 
+    /**
+     * 函数工具的名称、描述和 JSON Schema 参数定义。
+     */
     public record FunctionDefinition(
             String name,
             String description,

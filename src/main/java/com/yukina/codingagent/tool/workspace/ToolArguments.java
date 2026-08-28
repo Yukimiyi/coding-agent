@@ -3,15 +3,21 @@ package com.yukina.codingagent.tool.workspace;
 import com.yukina.codingagent.tool.ToolExecutionException;
 import tools.jackson.databind.JsonNode;
 
+/**
+ * 提供工具 JSON 参数的类型校验和默认值读取方法。
+ */
 public final class ToolArguments {
 
+    /** 禁止实例化参数工具类。 */
     private ToolArguments() {
     }
 
+    /** 读取必填且非空的字符串参数。 */
     public static String requiredText(JsonNode arguments, String name) {
         return requiredText(arguments, name, false);
     }
 
+    /** 按是否允许空字符串读取必填文本参数。 */
     public static String requiredText(JsonNode arguments, String name, boolean allowEmpty) {
         JsonNode value = arguments.get(name);
         if (value == null || !value.isTextual() || (!allowEmpty && value.asText().isBlank())) {
@@ -21,6 +27,7 @@ public final class ToolArguments {
         return value.asText();
     }
 
+    /** 读取可选字符串参数，缺失时返回默认值。 */
     public static String optionalText(JsonNode arguments, String name, String defaultValue) {
         JsonNode value = arguments.get(name);
         if (value == null || value.isNull()) {
@@ -32,6 +39,7 @@ public final class ToolArguments {
         return value.asText();
     }
 
+    /** 读取可选布尔参数，缺失时返回默认值。 */
     public static boolean optionalBoolean(JsonNode arguments, String name, boolean defaultValue) {
         JsonNode value = arguments.get(name);
         if (value == null || value.isNull()) {
@@ -43,6 +51,7 @@ public final class ToolArguments {
         return value.asBoolean();
     }
 
+    /** 读取限定闭区间的可选整数参数。 */
     public static int optionalInt(JsonNode arguments, String name, int defaultValue, int min, int max) {
         JsonNode value = arguments.get(name);
         if (value == null || value.isNull()) {

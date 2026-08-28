@@ -12,6 +12,9 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 驱动“模型推理 -> 工具执行 -> 结果回传”的 Agent 主循环。
+ */
 @Service
 public class AgentLoop {
 
@@ -20,6 +23,14 @@ public class AgentLoop {
     private final ToolExecutor toolExecutor;
     private final AgentLoopProperties properties;
 
+    /**
+     * 创建 Agent 循环服务。
+     *
+     * @param deepSeekClient DeepSeek 模型客户端
+     * @param toolRegistry 可提供给模型的工具注册表
+     * @param toolExecutor 工具执行器
+     * @param properties 循环边界配置
+     */
     public AgentLoop(
             DeepSeekClient deepSeekClient,
             ToolRegistry toolRegistry,
@@ -32,13 +43,32 @@ public class AgentLoop {
         this.properties = properties;
     }
 
+    /**
+     * 在无历史上下文的情况下执行一个独立任务。
+     *
+     * @param task 用户任务
+     * @return Agent 执行结果
+     */
     public AgentRunResult run(String task) {
+        return run(task, List.of());
+    }
+
+    /**
+     * 携带已有对话历史执行任务，直到得到最终回答或触发安全边界。
+     *
+     * @param task 当前用户任务
+     * @param conversationHistory 仅包含 user 和 assistant 消息的历史上下文
+     * @return Agent 执行结果和完整工具轨迹
+     */
+    public AgentRunResult run(String task, List<DeepSeekMessage> conversationHistory) {
         if (task == null || task.isBlank()) {
             throw new IllegalArgumentException("task must not be blank");
         }
+        List<DeepSeekMessage> safeHistory = validateHistory(conversationHistory);
 
         List<DeepSeekMessage> messages = new ArrayList<>();
         messages.add(DeepSeekMessage.system(properties.systemPrompt()));
+        messages.addAll(safeHistory);
         messages.add(DeepSeekMessage.user(task));
         List<AgentRunResult.ToolStep> toolSteps = new ArrayList<>();
         UsageAccumulator usage = new UsageAccumulator();
@@ -115,6 +145,28 @@ public class AgentLoop {
         );
     }
 
+    /**
+     * 复制并校验可安全放入新一轮请求的历史消息。
+     *
+     * @param history 待校验历史
+     * @return 不可变历史列表
+     */
+    private static List<DeepSeekMessage> validateHistory(List<DeepSeekMessage> history) {
+        if (history == null) {
+            return List.of();
+        }
+        List<DeepSeekMessage> safeHistory = List.copyOf(history);
+        boolean containsUnsupportedRole = safeHistory.stream().anyMatch(message -> message == null
+                || !("user".equals(message.role()) || "assistant".equals(message.role())));
+        if (containsUnsupportedRole) {
+            throw new IllegalArgumentException("conversation history may only contain user and assistant messages");
+        }
+        return safeHistory;
+    }
+
+    /**
+     * 将工具调用及结果转换为适合 API 返回的受限轨迹记录。
+     */
     private AgentRunResult.ToolStep toToolStep(
             int iteration,
             DeepSeekToolCall toolCall,
@@ -136,6 +188,9 @@ public class AgentLoop {
         );
     }
 
+    /**
+     * 按配置截断轨迹文本，避免响应体因大文件内容无限膨胀。
+     */
     private TruncatedText truncate(String value) {
         if (value == null || value.length() <= properties.traceContentLimit()) {
             return new TruncatedText(value, false);
@@ -143,6 +198,9 @@ public class AgentLoop {
         return new TruncatedText(value.substring(0, properties.traceContentLimit()), true);
     }
 
+    /**
+     * 统一构造不可变的 Agent 执行结果。
+     */
     private static AgentRunResult result(
             String answer,
             String model,
@@ -163,14 +221,17 @@ public class AgentLoop {
         );
     }
 
+    /** 保存文本及其是否被截断。 */
     private record TruncatedText(String value, boolean truncated) {
     }
 
+    /** 跨模型调用累计 Token 用量。 */
     private static final class UsageAccumulator {
         private long promptTokens;
         private long completionTokens;
         private long totalTokens;
 
+        /** 累加单次模型响应的用量。 */
         void add(DeepSeekChatResponse.Usage usage) {
             if (usage == null) {
                 return;
@@ -180,6 +241,7 @@ public class AgentLoop {
             totalTokens += usage.totalTokens();
         }
 
+        /** 返回当前累计值的不可变快照。 */
         AgentRunResult.Usage snapshot() {
             return new AgentRunResult.Usage(promptTokens, completionTokens, totalTokens);
         }

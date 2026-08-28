@@ -10,6 +10,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
 
+/**
+ * 使用 JDK HttpClient 调用 DeepSeek Chat Completions API。
+ */
 @Component
 public class DeepSeekClient {
 
@@ -17,6 +20,9 @@ public class DeepSeekClient {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
+    /**
+     * 创建 DeepSeek 客户端并按配置初始化连接超时。
+     */
     public DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper) {
         this.properties = properties;
         this.objectMapper = objectMapper;
@@ -25,10 +31,20 @@ public class DeepSeekClient {
                 .build();
     }
 
+    /**
+     * 发起不携带工具定义的普通对话请求。
+     */
     public DeepSeekChatResponse chat(List<DeepSeekMessage> messages) {
         return chat(messages, List.of());
     }
 
+    /**
+     * 发起可携带工具定义的对话请求。
+     *
+     * @param messages 完整对话消息
+     * @param tools 可供模型调用的工具定义
+     * @return DeepSeek 响应
+     */
     public DeepSeekChatResponse chat(
             List<DeepSeekMessage> messages,
             List<DeepSeekToolDefinition> tools
@@ -73,6 +89,9 @@ public class DeepSeekClient {
         }
     }
 
+    /**
+     * 将请求对象序列化为 DeepSeek 所需的 JSON。
+     */
     private String toJson(DeepSeekChatRequest request) {
         try {
             return objectMapper.writeValueAsString(request);

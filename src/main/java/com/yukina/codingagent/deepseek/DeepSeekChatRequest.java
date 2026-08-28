@@ -4,6 +4,15 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.util.List;
 
+/**
+ * DeepSeek Chat Completions 请求体。
+ *
+ * @param model 模型名称
+ * @param messages 对话消息
+ * @param tools 可调用工具定义
+ * @param thinking 思考模式配置
+ * @param stream 是否使用流式响应
+ */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record DeepSeekChatRequest(
         String model,
@@ -13,6 +22,11 @@ public record DeepSeekChatRequest(
         boolean stream
 ) {
 
+    /**
+     * DeepSeek 思考模式配置。
+     *
+     * @param type 模式类型
+     */
     public record Thinking(String type) {
     }
 }

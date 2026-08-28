@@ -4,6 +4,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.nio.file.Path;
 
+/**
+ * 工作区文件工具的根目录和资源上限配置。
+ */
 @ConfigurationProperties(prefix = "agent.workspace")
 public record WorkspaceProperties(
         Path root,
@@ -15,6 +18,7 @@ public record WorkspaceProperties(
         int maxDepth
 ) {
 
+    /** 校验根目录和各项资源上限。 */
     public WorkspaceProperties {
         if (root == null) {
             throw new IllegalArgumentException("agent.workspace.root must be configured");

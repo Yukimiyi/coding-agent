@@ -9,12 +9,16 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 
+/**
+ * 将模型提供的相对路径限制在工作区内，并阻止符号链接逃逸。
+ */
 @Component
 public class WorkspacePathResolver {
 
     private final Path root;
     private final Path realRoot;
 
+    /** 初始化规范路径和真实路径形式的工作区根目录。 */
     public WorkspacePathResolver(WorkspaceProperties properties) {
         this.root = properties.root().toAbsolutePath().normalize();
         try {
@@ -27,10 +31,12 @@ public class WorkspacePathResolver {
         }
     }
 
+    /** 返回规范化后的工作区根目录。 */
     public Path root() {
         return root;
     }
 
+    /** 解析并校验一个必须存在的工作区相对路径。 */
     public Path resolveExisting(String rawPath) {
         Path candidate = resolveLexically(rawPath);
         if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
@@ -40,6 +46,9 @@ public class WorkspacePathResolver {
         return candidate;
     }
 
+    /**
+     * 解析写入目标，并通过最近的已存在父目录验证真实路径边界。
+     */
     public Path resolveForWrite(String rawPath) {
         Path candidate = resolveLexically(rawPath);
         if (Files.isSymbolicLink(candidate)) {
@@ -61,10 +70,12 @@ public class WorkspacePathResolver {
         return candidate;
     }
 
+    /** 再次确认新建后的目录没有通过链接跳出工作区。 */
     public void ensureDirectoryInsideWorkspace(Path directory) {
         ensureRealPathInsideWorkspace(directory);
     }
 
+    /** 将路径转换为适合工具结果展示的工作区相对路径。 */
     public String display(Path path) {
         Path normalized = path.toAbsolutePath().normalize();
         if (normalized.startsWith(root)) {
@@ -74,6 +85,7 @@ public class WorkspacePathResolver {
         return normalized.toString().replace('\\', '/');
     }
 
+    /** 执行不访问文件系统的第一层词法边界检查。 */
     private Path resolveLexically(String rawPath) {
         if (rawPath == null || rawPath.isBlank()) {
             throw new ToolExecutionException("INVALID_ARGUMENTS", "path must not be blank");
@@ -93,6 +105,7 @@ public class WorkspacePathResolver {
         }
     }
 
+    /** 使用真实路径执行第二层符号链接边界检查。 */
     private void ensureRealPathInsideWorkspace(Path path) {
         try {
             Path realPath = path.toRealPath();
