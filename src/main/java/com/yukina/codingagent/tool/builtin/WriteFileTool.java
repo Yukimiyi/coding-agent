@@ -3,6 +3,7 @@ package com.yukina.codingagent.tool.builtin;
 import com.yukina.codingagent.deepseek.DeepSeekToolDefinition;
 import com.yukina.codingagent.tool.AgentTool;
 import com.yukina.codingagent.tool.ToolExecutionException;
+import com.yukina.codingagent.tool.workspace.AtomicTextFileWriter;
 import com.yukina.codingagent.tool.workspace.ToolArguments;
 import com.yukina.codingagent.tool.workspace.ToolJson;
 import com.yukina.codingagent.tool.workspace.WorkspacePathResolver;
@@ -13,12 +14,10 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -108,7 +107,7 @@ public class WriteFileTool implements AgentTool {
             Files.createDirectories(parent);
             pathResolver.ensureDirectoryInsideWorkspace(parent);
             if (overwrite) {
-                atomicWrite(path, content);
+                AtomicTextFileWriter.replace(path, content);
             } else {
                 Files.writeString(path, content, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
             }
@@ -126,30 +125,4 @@ public class WriteFileTool implements AgentTool {
         }
     }
 
-    /**
-     * 先写临时文件再替换目标，平台不支持原子移动时使用普通替换。
-     */
-    private static void atomicWrite(Path path, String content) throws IOException {
-        Path temporary = Files.createTempFile(path.getParent(), ".coding-agent-", ".tmp");
-        try {
-            Files.writeString(
-                    temporary,
-                    content,
-                    StandardCharsets.UTF_8,
-                    StandardOpenOption.TRUNCATE_EXISTING
-            );
-            try {
-                Files.move(
-                        temporary,
-                        path,
-                        StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING
-                );
-            } catch (AtomicMoveNotSupportedException exception) {
-                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } finally {
-            Files.deleteIfExists(temporary);
-        }
-    }
 }
