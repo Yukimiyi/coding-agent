@@ -3,6 +3,9 @@ package com.yukina.codingagent.tool.workspace;
 import com.yukina.codingagent.tool.ToolExecutionException;
 import tools.jackson.databind.JsonNode;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 提供工具 JSON 参数的类型校验和默认值读取方法。
  */
@@ -68,5 +71,30 @@ public final class ToolArguments {
             );
         }
         return number;
+    }
+
+    /** 读取由非空字符串组成且数量受限的必填数组参数。 */
+    public static List<String> requiredTextList(JsonNode arguments, String name, int maxItems) {
+        JsonNode value = arguments.get(name);
+        if (value == null || !value.isArray() || value.isEmpty()) {
+            throw new ToolExecutionException("INVALID_ARGUMENTS", name + " must be a non-empty string array");
+        }
+        if (value.size() > maxItems) {
+            throw new ToolExecutionException(
+                    "INVALID_ARGUMENTS",
+                    name + " must contain at most " + maxItems + " items"
+            );
+        }
+        List<String> items = new ArrayList<>(value.size());
+        for (JsonNode item : value) {
+            if (!item.isTextual() || item.asText().isBlank()) {
+                throw new ToolExecutionException(
+                        "INVALID_ARGUMENTS",
+                        name + " must contain only non-blank strings"
+                );
+            }
+            items.add(item.asText());
+        }
+        return List.copyOf(items);
     }
 }
