@@ -8,6 +8,7 @@ import {
   CornerDownLeft,
   LoaderCircle,
   Send,
+  Square,
   TerminalSquare,
   UserRound,
   X,
@@ -21,9 +22,13 @@ defineProps({
   loadingOlder: Boolean,
   hasMore: Boolean,
   errorMessage: { type: String, default: '' },
+  runStatus: { type: String, default: null },
+  currentIteration: { type: Number, default: 0 },
+  currentToolName: { type: String, default: '' },
+  cancelling: Boolean,
 })
 
-const emit = defineEmits(['send', 'load-older', 'dismiss-error'])
+const emit = defineEmits(['send', 'cancel', 'load-older', 'dismiss-error'])
 const draft = ref('')
 const composer = ref(null)
 
@@ -63,6 +68,16 @@ function formatTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function runLabel(status, iteration, toolName) {
+  if (status === 'QUEUED') {
+    return '等待执行'
+  }
+  if (toolName) {
+    return `第 ${iteration} 轮 · ${toolName}`
+  }
+  return iteration > 0 ? `第 ${iteration} 轮 · 模型处理中` : '准备执行'
 }
 </script>
 
@@ -133,7 +148,10 @@ function formatTime(value) {
         <article v-if="busy" class="message assistant pending-message">
           <div class="message-avatar"><Bot :size="18" /></div>
           <div class="message-body">
-            <div class="message-meta"><strong>Coding Agent</strong><span>执行中</span></div>
+            <div class="message-meta">
+              <strong>Coding Agent</strong>
+              <span>{{ cancelling ? '正在取消' : runLabel(runStatus, currentIteration, currentToolName) }}</span>
+            </div>
             <div class="thinking-line"><span /><span /><span /></div>
           </div>
         </article>
@@ -153,12 +171,14 @@ function formatTime(value) {
         />
         <button
           class="send-button"
+          :class="{ stop: busy }"
           type="button"
-          title="发送任务"
-          :disabled="busy || !draft.trim()"
-          @click="sendTask()"
+          :title="busy ? '取消任务' : '发送任务'"
+          :disabled="busy ? cancelling : !draft.trim()"
+          @click="busy ? emit('cancel') : sendTask()"
         >
-          <LoaderCircle v-if="busy" :size="18" class="spin" />
+          <LoaderCircle v-if="cancelling" :size="18" class="spin" />
+          <Square v-else-if="busy" :size="15" fill="currentColor" />
           <Send v-else :size="18" />
         </button>
       </div>

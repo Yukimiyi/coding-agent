@@ -1,6 +1,7 @@
 package com.yukina.codingagent.tool.workspace;
 
 import com.yukina.codingagent.tool.ToolExecutionException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -15,25 +16,22 @@ import java.nio.file.Path;
 @Component
 public class WorkspacePathResolver {
 
-    private final Path root;
-    private final Path realRoot;
+    private final WorkspaceExecutionContext executionContext;
 
-    /** 初始化规范路径和真实路径形式的工作区根目录。 */
-    public WorkspacePathResolver(WorkspaceProperties properties) {
-        this.root = properties.root().toAbsolutePath().normalize();
-        try {
-            if (!Files.isDirectory(root)) {
-                throw new IllegalStateException("Workspace root is not a directory: " + root);
-            }
-            this.realRoot = root.toRealPath();
-        } catch (IOException exception) {
-            throw new IllegalStateException("Failed to initialize workspace root: " + root, exception);
-        }
+    /** 创建使用运行范围工作空间上下文的路径解析器。 */
+    @Autowired
+    public WorkspacePathResolver(WorkspaceExecutionContext executionContext) {
+        this.executionContext = executionContext;
     }
 
-    /** 返回规范化后的工作区根目录。 */
+    /** 创建使用固定默认目录的独立解析器，供非 Spring 场景使用。 */
+    public WorkspacePathResolver(WorkspaceProperties properties) {
+        this(new WorkspaceExecutionContext(properties));
+    }
+
+    /** 返回当前运行绑定的工作区根目录。 */
     public Path root() {
-        return root;
+        return executionContext.root();
     }
 
     /** 解析并校验一个必须存在的工作区相对路径。 */
@@ -77,6 +75,7 @@ public class WorkspacePathResolver {
 
     /** 将路径转换为适合工具结果展示的工作区相对路径。 */
     public String display(Path path) {
+        Path root = root();
         Path normalized = path.toAbsolutePath().normalize();
         if (normalized.startsWith(root)) {
             String relative = root.relativize(normalized).toString().replace('\\', '/');
@@ -91,6 +90,7 @@ public class WorkspacePathResolver {
             throw new ToolExecutionException("INVALID_ARGUMENTS", "path must not be blank");
         }
         try {
+            Path root = root();
             Path supplied = Path.of(rawPath);
             if (supplied.isAbsolute() || supplied.getRoot() != null) {
                 throw new ToolExecutionException("ABSOLUTE_PATH_FORBIDDEN", "path must be relative to the workspace");
@@ -108,6 +108,7 @@ public class WorkspacePathResolver {
     /** 使用真实路径执行第二层符号链接边界检查。 */
     private void ensureRealPathInsideWorkspace(Path path) {
         try {
+            Path realRoot = root().toRealPath();
             Path realPath = path.toRealPath();
             if (!realPath.startsWith(realRoot)) {
                 throw new ToolExecutionException("PATH_OUTSIDE_WORKSPACE", "path resolves outside the workspace");

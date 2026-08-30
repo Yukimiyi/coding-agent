@@ -15,14 +15,17 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** 验证 Agent 循环的工具编排和停止边界。 */
@@ -112,6 +115,62 @@ class AgentLoopTest {
         assertFalse(result.completed());
         assertEquals(AgentRunResult.StopReason.TOOL_CALL_LIMIT, result.stopReason());
         assertTrue(result.toolSteps().isEmpty());
+    }
+
+    /** 验证观察器按实际执行顺序收到公开阶段事件。 */
+    @Test
+    void publishesIterationAndToolEventsInOrder() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        when(client.chat(anyList(), anyList())).thenReturn(
+                response(toolMessage(call("echo", "call-live", "{\"text\":\"live\"}")), "tool_calls", 2),
+                response(DeepSeekMessage.assistant("Done.", null, null), "stop", 2)
+        );
+        List<String> events = new java.util.ArrayList<>();
+        AgentLoopObserver observer = new AgentLoopObserver() {
+            @Override
+            public void onIterationStarted(int iteration) {
+                events.add("iteration:" + iteration);
+            }
+
+            @Override
+            public void onModelResponse(int iteration, String model, int toolCallCount) {
+                events.add("model:" + iteration + ":" + toolCallCount);
+            }
+
+            @Override
+            public void onToolStarted(int iteration, String id, String name, String arguments) {
+                events.add("tool-start:" + name);
+            }
+
+            @Override
+            public void onToolCompleted(AgentRunResult.ToolStep toolStep) {
+                events.add("tool-end:" + toolStep.toolName());
+            }
+        };
+
+        loop(client, 4, 4).run("Run live", List.of(), observer, AgentRunCancellation.NONE);
+
+        assertEquals(List.of(
+                "iteration:1",
+                "model:1:1",
+                "tool-start:echo",
+                "tool-end:echo",
+                "iteration:2",
+                "model:2:0"
+        ), events);
+    }
+
+    /** 验证预先取消的任务不会继续调用模型。 */
+    @Test
+    void stopsBeforeModelCallWhenCancelled() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        AtomicBoolean cancelled = new AtomicBoolean(true);
+
+        assertThrows(
+                AgentRunCancelledException.class,
+                () -> loop(client, 4, 4).run("Do not run", List.of(), AgentLoopObserver.NONE, cancelled::get)
+        );
+        verifyNoInteractions(client);
     }
 
     /** 使用测试边界配置创建 Agent 循环。 */

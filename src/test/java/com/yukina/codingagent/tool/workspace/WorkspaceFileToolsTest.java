@@ -29,6 +29,7 @@ class WorkspaceFileToolsTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private WorkspacePathResolver pathResolver;
+    private WorkspaceExecutionContext executionContext;
     private WorkspaceProperties properties;
 
     /** 为每个用例创建隔离的临时工作区和工具实例。 */
@@ -43,7 +44,8 @@ class WorkspaceFileToolsTest {
                 1024,
                 5
         );
-        pathResolver = new WorkspacePathResolver(properties);
+        executionContext = new WorkspaceExecutionContext(properties);
+        pathResolver = new WorkspacePathResolver(executionContext);
     }
 
     /** 验证 UTF-8 文件可以写入并完整读回。 */
@@ -183,5 +185,38 @@ class WorkspaceFileToolsTest {
 
         assertEquals(0, result.path("matches").size());
         assertEquals(1, result.path("skippedFiles").asInt());
+    }
+
+    /** 验证同一个工具实例会按当前运行上下文隔离两个目录。 */
+    @Test
+    void isolatesFilesByExecutionWorkspace() throws Exception {
+        Path first = Files.createDirectory(workspace.resolve("first"));
+        Path second = Files.createDirectory(workspace.resolve("second"));
+        Files.writeString(first.resolve("marker.txt"), "FIRST");
+        Files.writeString(second.resolve("marker.txt"), "SECOND");
+        ReadFileTool readFile = new ReadFileTool(pathResolver, properties, objectMapper);
+        JsonNode arguments = objectMapper.readTree("{\"path\":\"marker.txt\"}");
+
+        String firstContent = executionContext.withWorkspace(
+                first,
+                () -> readContent(readFile, arguments)
+        );
+        String secondContent = executionContext.withWorkspace(
+                second,
+                () -> readContent(readFile, arguments)
+        );
+
+        assertEquals("FIRST", firstContent);
+        assertEquals("SECOND", secondContent);
+        assertEquals(workspace.toRealPath(), executionContext.root());
+    }
+
+    /** 执行读取工具并提取文本内容。 */
+    private String readContent(ReadFileTool readFile, JsonNode arguments) {
+        try {
+            return objectMapper.readTree(readFile.execute(arguments)).path("content").asText();
+        } catch (Exception exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 }

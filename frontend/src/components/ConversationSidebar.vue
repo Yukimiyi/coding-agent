@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import {
   Code2,
+  FolderGit2,
   MessageSquare,
   Pencil,
   Plus,
@@ -13,12 +14,24 @@ import {
 const props = defineProps({
   open: Boolean,
   conversations: { type: Array, default: () => [] },
+  workspaces: { type: Array, default: () => [] },
+  selectedWorkspaceId: { type: String, default: null },
   selectedId: { type: String, default: null },
   loading: Boolean,
+  workspaceLoading: Boolean,
+  busy: Boolean,
   online: Boolean,
 })
 
-defineEmits(['close', 'new', 'select', 'rename', 'delete'])
+defineEmits([
+  'close',
+  'new',
+  'select',
+  'rename',
+  'delete',
+  'workspace-change',
+  'add-workspace',
+])
 
 const query = ref('')
 
@@ -59,14 +72,37 @@ function formatRelativeTime(value) {
       <div class="brand-mark"><Code2 :size="20" /></div>
       <div class="brand-copy">
         <strong>Coding Agent</strong>
-        <span>Workspace</span>
+        <span>Projects</span>
       </div>
       <button class="icon-button sidebar-close mobile-only" type="button" title="关闭" @click="$emit('close')">
         <X :size="18" />
       </button>
     </div>
 
-    <button class="new-conversation-button" type="button" @click="$emit('new')">
+    <div class="workspace-switcher">
+      <FolderGit2 :size="16" />
+      <select
+        :value="selectedWorkspaceId"
+        :disabled="busy || workspaceLoading"
+        aria-label="选择项目"
+        @change="$emit('workspace-change', $event.target.value)"
+      >
+        <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">
+          {{ workspace.name }}
+        </option>
+      </select>
+      <button
+        class="row-action"
+        type="button"
+        title="创建项目"
+        :disabled="busy"
+        @click="$emit('add-workspace')"
+      >
+        <Plus :size="15" />
+      </button>
+    </div>
+
+    <button class="new-conversation-button" type="button" :disabled="busy || !selectedWorkspaceId" @click="$emit('new')">
       <Plus :size="17" />
       新对话
     </button>

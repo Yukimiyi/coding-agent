@@ -31,10 +31,18 @@ public class ConversationService {
         this.contextManager = contextManager;
     }
 
-    /** 创建使用 UUID 标识的新会话。 */
-    public Conversation create(String title) {
+    /** 创建绑定到指定项目工作空间的新会话。 */
+    public Conversation create(String title, String workspaceId) {
+        if (workspaceId == null || workspaceId.isBlank()) {
+            throw new IllegalArgumentException("workspaceId must not be blank");
+        }
         Instant now = Instant.now();
-        return repository.create(UUID.randomUUID().toString(), normalizeTitle(title), now);
+        return repository.create(
+                UUID.randomUUID().toString(),
+                normalizeTitle(title),
+                workspaceId,
+                now
+        );
     }
 
     /** 查询会话，不存在时抛出领域异常。 */
@@ -49,6 +57,17 @@ public class ConversationService {
             throw new IllegalArgumentException("limit must be between 1 and 100");
         }
         return repository.listRecent(limit);
+    }
+
+    /** 按项目过滤并列出最近活动的会话。 */
+    public List<Conversation> list(String workspaceId, int limit) {
+        if (workspaceId == null || workspaceId.isBlank()) {
+            throw new IllegalArgumentException("workspaceId must not be blank");
+        }
+        if (limit < 1 || limit > 100) {
+            throw new IllegalArgumentException("limit must be between 1 and 100");
+        }
+        return repository.listRecent(workspaceId, limit);
     }
 
     /** 规范化并修改会话标题。 */

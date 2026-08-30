@@ -32,27 +32,28 @@ public class ConversationRepository {
     }
 
     /** 插入并返回新会话。 */
-    public Conversation create(String id, String title, Instant now) {
+    public Conversation create(String id, String title, String workspaceId, Instant now) {
         jdbcTemplate.update(
-                "INSERT INTO conversations(id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, workspace_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                 id,
                 title,
+                workspaceId,
                 Timestamp.from(now),
                 Timestamp.from(now)
         );
-        return new Conversation(id, title, now, now);
+        return new Conversation(id, title, workspaceId, now, now);
+    }
+
+    /** 插入用于旧单元测试或迁移场景的未绑定会话。 */
+    public Conversation create(String id, String title, Instant now) {
+        return create(id, title, null, now);
     }
 
     /** 按 ID 查询会话。 */
     public Optional<Conversation> findById(String id) {
         List<Conversation> conversations = jdbcTemplate.query(
-                "SELECT id, title, created_at, updated_at FROM conversations WHERE id = ?",
-                (resultSet, rowNumber) -> new Conversation(
-                        resultSet.getString("id"),
-                        resultSet.getString("title"),
-                        resultSet.getTimestamp("created_at").toInstant(),
-                        resultSet.getTimestamp("updated_at").toInstant()
-                ),
+                "SELECT id, title, workspace_id, created_at, updated_at FROM conversations WHERE id = ?",
+                this::mapConversation,
                 id
         );
         return conversations.stream().findFirst();
@@ -61,14 +62,20 @@ public class ConversationRepository {
     /** 按最近活动时间倒序查询会话。 */
     public List<Conversation> listRecent(int limit) {
         return jdbcTemplate.query(
-                "SELECT id, title, created_at, updated_at "
+                "SELECT id, title, workspace_id, created_at, updated_at "
                         + "FROM conversations ORDER BY updated_at DESC, id DESC LIMIT ?",
-                (resultSet, rowNumber) -> new Conversation(
-                        resultSet.getString("id"),
-                        resultSet.getString("title"),
-                        resultSet.getTimestamp("created_at").toInstant(),
-                        resultSet.getTimestamp("updated_at").toInstant()
-                ),
+                this::mapConversation,
+                limit
+        );
+    }
+
+    /** 按工作空间过滤并按最近活动时间倒序查询会话。 */
+    public List<Conversation> listRecent(String workspaceId, int limit) {
+        return jdbcTemplate.query(
+                "SELECT id, title, workspace_id, created_at, updated_at FROM conversations "
+                        + "WHERE workspace_id = ? ORDER BY updated_at DESC, id DESC LIMIT ?",
+                this::mapConversation,
+                workspaceId,
                 limit
         );
     }
@@ -190,6 +197,17 @@ public class ConversationRepository {
                 resultSet.getString("content"),
                 ConversationMessage.Status.valueOf(resultSet.getString("status")),
                 resultSet.getTimestamp("created_at").toInstant()
+        );
+    }
+
+    /** 将 JDBC 行映射为会话元数据。 */
+    private Conversation mapConversation(java.sql.ResultSet resultSet, int rowNumber) throws java.sql.SQLException {
+        return new Conversation(
+                resultSet.getString("id"),
+                resultSet.getString("title"),
+                resultSet.getString("workspace_id"),
+                resultSet.getTimestamp("created_at").toInstant(),
+                resultSet.getTimestamp("updated_at").toInstant()
         );
     }
 }

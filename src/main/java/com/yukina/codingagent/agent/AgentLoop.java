@@ -61,10 +61,30 @@ public class AgentLoop {
      * @return Agent 执行结果和完整工具轨迹
      */
     public AgentRunResult run(String task, List<DeepSeekMessage> conversationHistory) {
+        return run(task, conversationHistory, AgentLoopObserver.NONE, AgentRunCancellation.NONE);
+    }
+
+    /**
+     * 携带观察器和取消信号执行任务。
+     *
+     * @param task 当前用户任务
+     * @param conversationHistory 对话历史
+     * @param observer 公开执行阶段观察器
+     * @param cancellation 协作式取消信号
+     * @return Agent 执行结果和完整工具轨迹
+     */
+    public AgentRunResult run(
+            String task,
+            List<DeepSeekMessage> conversationHistory,
+            AgentLoopObserver observer,
+            AgentRunCancellation cancellation
+    ) {
         if (task == null || task.isBlank()) {
             throw new IllegalArgumentException("task must not be blank");
         }
         List<DeepSeekMessage> safeHistory = validateHistory(conversationHistory);
+        AgentLoopObserver safeObserver = observer == null ? AgentLoopObserver.NONE : observer;
+        AgentRunCancellation safeCancellation = cancellation == null ? AgentRunCancellation.NONE : cancellation;
 
         List<DeepSeekMessage> messages = new ArrayList<>();
         messages.add(DeepSeekMessage.system(properties.systemPrompt()));
@@ -75,10 +95,16 @@ public class AgentLoop {
         String model = null;
 
         for (int iteration = 1; iteration <= properties.maxIterations(); iteration++) {
-            DeepSeekChatResponse response = deepSeekClient.chat(
-                    List.copyOf(messages),
-                    toolRegistry.definitions()
-            );
+            safeCancellation.throwIfCancellationRequested();
+            safeObserver.onIterationStarted(iteration);
+            DeepSeekChatResponse response;
+            try {
+                response = deepSeekClient.chat(List.copyOf(messages), toolRegistry.definitions());
+            } catch (RuntimeException exception) {
+                safeCancellation.throwIfCancellationRequested();
+                throw exception;
+            }
+            safeCancellation.throwIfCancellationRequested();
             model = response.model();
             usage.add(response.usage());
             DeepSeekMessage assistant = response.firstMessage();
@@ -87,6 +113,7 @@ public class AgentLoop {
             List<DeepSeekToolCall> toolCalls = assistant.toolCalls() == null
                     ? List.of()
                     : assistant.toolCalls();
+            safeObserver.onModelResponse(iteration, model, toolCalls.size());
             if (toolCalls.isEmpty()) {
                 String answer = assistant.content();
                 boolean completed = answer != null && !answer.isBlank();
@@ -125,12 +152,17 @@ public class AgentLoop {
                 );
             }
 
-            List<ToolExecutionResult> executionResults = toolExecutor.executeAll(toolCalls);
-            for (int index = 0; index < executionResults.size(); index++) {
-                DeepSeekToolCall toolCall = toolCalls.get(index);
-                ToolExecutionResult executionResult = executionResults.get(index);
+            for (DeepSeekToolCall toolCall : toolCalls) {
+                safeCancellation.throwIfCancellationRequested();
+                String toolName = toolCall.function() == null ? null : toolCall.function().name();
+                String arguments = toolCall.function() == null ? null : toolCall.function().arguments();
+                safeObserver.onToolStarted(iteration, toolCall.id(), toolName, truncate(arguments).value());
+                ToolExecutionResult executionResult = toolExecutor.execute(toolCall);
+                safeCancellation.throwIfCancellationRequested();
                 messages.add(executionResult.toToolMessage());
-                toolSteps.add(toToolStep(iteration, toolCall, executionResult));
+                AgentRunResult.ToolStep toolStep = toToolStep(iteration, toolCall, executionResult);
+                toolSteps.add(toolStep);
+                safeObserver.onToolCompleted(toolStep);
             }
         }
 

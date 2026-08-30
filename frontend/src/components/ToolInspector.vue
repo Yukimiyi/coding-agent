@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Clipboard,
   Clock3,
+  LoaderCircle,
   X,
   XCircle,
 } from 'lucide-vue-next'
@@ -15,6 +16,9 @@ import {
 const props = defineProps({
   open: Boolean,
   steps: { type: Array, default: () => [] },
+  runStatus: { type: String, default: null },
+  currentIteration: { type: Number, default: 0 },
+  currentToolName: { type: String, default: '' },
 })
 
 defineEmits(['close'])
@@ -109,6 +113,14 @@ async function copyStep(step, index) {
         <X :size="18" />
       </button>
     </header>
+
+    <div v-if="runStatus === 'QUEUED' || runStatus === 'RUNNING'" class="live-run-strip">
+      <LoaderCircle :size="15" class="spin" />
+      <span>
+        {{ runStatus === 'QUEUED' ? '等待执行' : `第 ${currentIteration || 1} 轮` }}
+        <small v-if="currentToolName">{{ currentToolName }}</small>
+      </span>
+    </div>
 
     <div class="trace-summary">
       <div><strong>{{ steps.length }}</strong><span>调用</span></div>

@@ -11,6 +11,10 @@ spring:
   sql:
     init:
       mode: always
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 25MB
 
 deepseek:
   base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
@@ -20,6 +24,17 @@ deepseek:
   thinking-enabled: ${DEEPSEEK_THINKING_ENABLED:false}
 
 agent:
+  workspace-registry:
+    max-workspaces: 50
+    storage-root: ${CODING_AGENT_WORKSPACE_STORAGE:${user.dir}/.tmp}
+  workspace-import:
+    max-files: 200
+    max-file-bytes: 1048576
+    max-total-bytes: 20971520
+  runs:
+    retention: 1h
+    max-runs: 200
+    sse-timeout: 30m
   command:
     default-timeout: 60s
     max-timeout: 300s
@@ -52,7 +67,7 @@ agent:
     ttl: 30m
     max-cached-conversations: 1000
   loop:
-    max-iterations: 8
+    max-iterations: 16
     max-tool-calls-per-iteration: 8
     trace-content-limit: 4000
     system-prompt: >
@@ -62,7 +77,7 @@ agent:
       text to identify a unique match. When the task is complete, respond with a concise summary and any verification
       performed.
   workspace:
-    root: ${CODING_AGENT_WORKSPACE:${user.dir}}
+    root: ${CODING_AGENT_WORKSPACE:${user.dir}/.tmp/.runtime}
     max-read-bytes: 1048576
     max-write-bytes: 1048576
     max-list-entries: 500

@@ -3,6 +3,8 @@ package com.yukina.codingagent.controller;
 import com.yukina.codingagent.conversation.model.Conversation;
 import com.yukina.codingagent.conversation.model.MessagePage;
 import com.yukina.codingagent.conversation.service.ConversationService;
+import com.yukina.codingagent.workspace.model.Workspace;
+import com.yukina.codingagent.workspace.service.WorkspaceService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,23 +27,37 @@ import java.util.List;
 public class ConversationController {
 
     private final ConversationService conversationService;
+    private final WorkspaceService workspaceService;
 
     /** 创建会话管理控制器。 */
-    public ConversationController(ConversationService conversationService) {
+    public ConversationController(
+            ConversationService conversationService,
+            WorkspaceService workspaceService
+    ) {
         this.conversationService = conversationService;
+        this.workspaceService = workspaceService;
     }
 
     /** 创建一个新会话。 */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Conversation create(@RequestBody(required = false) CreateConversationRequest request) {
-        return conversationService.create(request == null ? null : request.title());
+        String workspaceId = request == null ? null : request.workspaceId();
+        Workspace workspace = workspaceService.get(workspaceId);
+        return conversationService.create(request.title(), workspace.id());
     }
 
     /** 按最近更新时间倒序列出会话。 */
     @GetMapping
-    public List<Conversation> list(@RequestParam(defaultValue = "20") int limit) {
-        return conversationService.list(limit);
+    public List<Conversation> list(
+            @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(required = false) String workspaceId
+    ) {
+        if (workspaceId == null || workspaceId.isBlank()) {
+            return conversationService.list(limit);
+        }
+        workspaceService.get(workspaceId);
+        return conversationService.list(workspaceId, limit);
     }
 
     /** 查询指定会话。 */
@@ -77,7 +93,7 @@ public class ConversationController {
     }
 
     /** 创建会话请求。 */
-    public record CreateConversationRequest(String title) {
+    public record CreateConversationRequest(String title, String workspaceId) {
     }
 
     /** 修改会话标题请求。 */

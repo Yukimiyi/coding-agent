@@ -1,5 +1,6 @@
 package com.yukina.codingagent.conversation.service;
 
+import com.yukina.codingagent.agent.AgentRunCancelledException;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,6 +26,29 @@ public class ConversationLockManager {
             return action.get();
         } finally {
             lock.unlock();
+            if (!lock.isLocked() && !lock.hasQueuedThreads()) {
+                locks.remove(conversationId, lock);
+            }
+        }
+    }
+
+    /**
+     * 可中断地等待会话锁，使排队中的异步任务能够响应取消请求。
+     */
+    public <T> T withInterruptibleLock(String conversationId, Supplier<T> action) {
+        ReentrantLock lock = locks.computeIfAbsent(conversationId, id -> new ReentrantLock());
+        boolean acquired = false;
+        try {
+            lock.lockInterruptibly();
+            acquired = true;
+            return action.get();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new AgentRunCancelledException();
+        } finally {
+            if (acquired) {
+                lock.unlock();
+            }
             if (!lock.isLocked() && !lock.hasQueuedThreads()) {
                 locks.remove(conversationId, lock);
             }

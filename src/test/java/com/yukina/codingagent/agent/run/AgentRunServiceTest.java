@@ -1,0 +1,151 @@
+package com.yukina.codingagent.agent.run;
+
+import com.yukina.codingagent.agent.AgentRunCancelledException;
+import com.yukina.codingagent.agent.AgentRunResult;
+import com.yukina.codingagent.conversation.model.ConversationChatResult;
+import com.yukina.codingagent.conversation.service.ConversationAgentService;
+import com.yukina.codingagent.workspace.model.Workspace;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+/** 验证异步任务的幂等提交、实时轨迹和取消终态。 */
+class AgentRunServiceTest {
+
+    private ConversationAgentService conversationAgentService;
+    private AgentRunService runService;
+
+    /** 创建带短测试超时的异步任务服务。 */
+    @BeforeEach
+    void setUp() {
+        conversationAgentService = mock(ConversationAgentService.class);
+        runService = new AgentRunService(
+                conversationAgentService,
+                new AgentRunProperties(Duration.ofMinutes(5), 20, Duration.ofMinutes(1))
+        );
+    }
+
+    /** 关闭测试虚拟线程执行器。 */
+    @AfterEach
+    void tearDown() {
+        runService.shutdown();
+    }
+
+    /** 验证提交立即返回、requestId 幂等且工具步骤进入状态快照。 */
+    @Test
+    void submitsIdempotentlyAndCollectsLiveToolSteps() throws Exception {
+        ConversationAgentService.PreparedConversation prepared =
+                new ConversationAgentService.PreparedConversation("conversation-1", true, "test task", workspace());
+        when(conversationAgentService.prepare(null, null, "test task")).thenReturn(prepared);
+        CountDownLatch release = new CountDownLatch(1);
+        when(conversationAgentService.execute(any(), any(), any())).thenAnswer(invocation -> {
+            var observer = (com.yukina.codingagent.agent.AgentLoopObserver) invocation.getArgument(1);
+            observer.onIterationStarted(1);
+            observer.onToolCompleted(toolStep());
+            assertTrue(release.await(2, TimeUnit.SECONDS));
+            return new ConversationChatResult("conversation-1", true, completed());
+        });
+
+        AgentRunAccepted first = runService.submit("request-1", null, "test task");
+        AgentRunAccepted duplicate = runService.submit("request-1", null, "test task");
+
+        assertEquals(first.runId(), duplicate.runId());
+        assertNotNull(first.conversationId());
+        assertEquals("workspace-1", first.workspaceId());
+        release.countDown();
+        AgentRunSnapshot snapshot = awaitTerminal(first.runId());
+        assertEquals(AgentRunStatus.COMPLETED, snapshot.status());
+        assertEquals(1, snapshot.toolSteps().size());
+        assertEquals("read_file", snapshot.toolSteps().getFirst().toolName());
+        assertTrue(snapshot.lastSequence() >= 5);
+    }
+
+    /** 验证取消会中断后台执行且终态不会被完成结果覆盖。 */
+    @Test
+    void cancelsRunningTask() throws Exception {
+        ConversationAgentService.PreparedConversation prepared =
+                new ConversationAgentService.PreparedConversation("conversation-2", false, "long task", workspace());
+        when(conversationAgentService.prepare("conversation-2", null, "long task")).thenReturn(prepared);
+        CountDownLatch started = new CountDownLatch(1);
+        when(conversationAgentService.execute(any(), any(), any())).thenAnswer(invocation -> {
+            var cancellation = (com.yukina.codingagent.agent.AgentRunCancellation) invocation.getArgument(2);
+            started.countDown();
+            while (!cancellation.isCancellationRequested()) {
+                Thread.sleep(10);
+            }
+            throw new AgentRunCancelledException();
+        });
+
+        AgentRunAccepted accepted = runService.submit("request-2", "conversation-2", "long task");
+        assertTrue(started.await(1, TimeUnit.SECONDS));
+        AgentRunSnapshot cancelled = runService.cancel(accepted.runId());
+
+        assertEquals(AgentRunStatus.CANCELLED, cancelled.status());
+        Thread.sleep(30);
+        assertEquals(AgentRunStatus.CANCELLED, runService.get(accepted.runId()).status());
+    }
+
+    /** 等待任务进入任意终态。 */
+    private AgentRunSnapshot awaitTerminal(String runId) throws InterruptedException {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            AgentRunSnapshot snapshot = runService.get(runId);
+            if (snapshot.status().isTerminal()) {
+                return snapshot;
+            }
+            Thread.sleep(10);
+        }
+        throw new AssertionError("run did not finish in time");
+    }
+
+    /** 创建一条测试工具轨迹。 */
+    private static AgentRunResult.ToolStep toolStep() {
+        return new AgentRunResult.ToolStep(
+                1,
+                "call-1",
+                "read_file",
+                "{\"path\":\"README.md\"}",
+                false,
+                true,
+                "content",
+                false,
+                null
+        );
+    }
+
+    /** 创建已完成的 Agent 结果。 */
+    private static AgentRunResult completed() {
+        return new AgentRunResult(
+                "Done.",
+                "deepseek-test",
+                1,
+                true,
+                AgentRunResult.StopReason.COMPLETED,
+                List.of(toolStep()),
+                new AgentRunResult.Usage(1, 1, 2)
+        );
+    }
+
+    /** 创建测试工作空间。 */
+    private static Workspace workspace() {
+        return new Workspace(
+                "workspace-1",
+                "Test workspace",
+                "C:\\workspace",
+                Instant.EPOCH,
+                Instant.EPOCH
+        );
+    }
+}

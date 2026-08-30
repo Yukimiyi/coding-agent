@@ -9,9 +9,15 @@ import com.yukina.codingagent.conversation.model.ConversationChatResult;
 import com.yukina.codingagent.conversation.model.MessagePage;
 import com.yukina.codingagent.conversation.repository.ConversationRepository;
 import com.yukina.codingagent.deepseek.DeepSeekMessage;
+import com.yukina.codingagent.tool.workspace.WorkspaceExecutionContext;
+import com.yukina.codingagent.tool.workspace.WorkspaceProperties;
+import com.yukina.codingagent.workspace.model.Workspace;
+import com.yukina.codingagent.workspace.service.WorkspaceService;
+import com.yukina.codingagent.workspace.service.WorkspaceLockManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.embedded.EmbeddedDatabase;
@@ -19,12 +25,15 @@ import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseBuilder;
 import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseType;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -32,6 +41,9 @@ import static org.mockito.Mockito.when;
 
 /** 验证跨请求的有状态 Agent 对话编排。 */
 class ConversationAgentServiceTest {
+
+    @TempDir
+    Path workspaceRoot;
 
     private EmbeddedDatabase database;
     private ConversationService conversationService;
@@ -46,7 +58,16 @@ class ConversationAgentServiceTest {
                 .setType(EmbeddedDatabaseType.H2)
                 .addScript("schema.sql")
                 .build();
-        ConversationRepository repository = new ConversationRepository(new JdbcTemplate(database));
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(database);
+        jdbcTemplate.update(
+                "INSERT INTO workspaces(id, name, root_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                "workspace-1",
+                "Test workspace",
+                workspaceRoot.toString(),
+                java.sql.Timestamp.from(Instant.now()),
+                java.sql.Timestamp.from(Instant.now())
+        );
+        ConversationRepository repository = new ConversationRepository(jdbcTemplate);
         ConversationContextProperties properties = new ConversationContextProperties(
                 20,
                 1000,
@@ -60,11 +81,27 @@ class ConversationAgentServiceTest {
         );
         conversationService = new ConversationService(repository, contextManager);
         agentLoop = mock(AgentLoop.class);
+        Workspace workspace = new Workspace(
+                "workspace-1",
+                "Test workspace",
+                workspaceRoot.toString(),
+                Instant.now(),
+                Instant.now()
+        );
+        WorkspaceService workspaceService = mock(WorkspaceService.class);
+        when(workspaceService.get("workspace-1")).thenReturn(workspace);
+        when(workspaceService.rootPath(workspace)).thenReturn(workspaceRoot);
+        WorkspaceProperties workspaceProperties = new WorkspaceProperties(
+                workspaceRoot, 1024, 1024, 100, 50, 1024, 5
+        );
         conversationAgentService = new ConversationAgentService(
                 agentLoop,
                 conversationService,
                 contextManager,
-                new ConversationLockManager()
+                new ConversationLockManager(),
+                workspaceService,
+                new WorkspaceLockManager(),
+                new WorkspaceExecutionContext(workspaceProperties)
         );
     }
 
@@ -77,17 +114,18 @@ class ConversationAgentServiceTest {
     /** 验证后续请求获得前一轮历史并持久化完整消息。 */
     @Test
     void preservesHistoryAcrossConversationRequests() {
-        when(agentLoop.run(eq("First question"), anyList())).thenReturn(completed("First answer"));
-        when(agentLoop.run(eq("Follow-up"), anyList())).thenReturn(completed("Second answer"));
+        when(agentLoop.run(eq("First question"), anyList(), any(), any())).thenReturn(completed("First answer"));
+        when(agentLoop.run(eq("Follow-up"), anyList(), any(), any())).thenReturn(completed("Second answer"));
 
-        ConversationChatResult first = conversationAgentService.chat(null, "First question");
+        ConversationChatResult first = conversationAgentService.chat(null, "workspace-1", "First question");
         ConversationChatResult second = conversationAgentService.chat(first.conversationId(), "Follow-up");
 
         assertTrue(first.conversationCreated());
         assertFalse(second.conversationCreated());
+        assertEquals("workspace-1", conversationService.get(first.conversationId()).workspaceId());
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<DeepSeekMessage>> history = ArgumentCaptor.forClass(List.class);
-        verify(agentLoop).run(eq("Follow-up"), history.capture());
+        verify(agentLoop).run(eq("Follow-up"), history.capture(), any(), any());
         assertEquals(List.of("user", "assistant"), history.getValue().stream()
                 .map(DeepSeekMessage::role)
                 .toList());

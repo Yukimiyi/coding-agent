@@ -156,6 +156,40 @@ textarea:focus-visible {
   line-height: 1.35;
 }
 
+.workspace-switcher {
+  display: grid;
+  min-height: 38px;
+  grid-template-columns: 18px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 7px;
+  margin: 0 14px 10px;
+  padding: 4px 5px 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: rgb(255 255 255 / 72%);
+}
+
+.workspace-switcher:focus-within {
+  border-color: #89b8a7;
+  background: var(--surface);
+}
+
+.workspace-switcher select {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 600;
+  background: transparent;
+}
+
+.workspace-switcher .row-action {
+  width: 27px;
+}
+
 .new-conversation-button {
   display: flex;
   min-height: 38px;
@@ -414,6 +448,17 @@ textarea:focus-visible {
   font-size: 14px;
   font-weight: 650;
   line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-context {
+  min-width: 0;
+  overflow: hidden;
+  padding-left: 12px;
+  border-left: 1px solid var(--border-strong);
+  color: var(--muted);
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -821,6 +866,15 @@ textarea:focus-visible {
   background: var(--accent-dark);
 }
 
+.send-button.stop {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.send-button.stop:hover:not(:disabled) {
+  background: #f5dada;
+}
+
 .composer-status {
   display: flex;
   width: min(820px, 100%);
@@ -877,6 +931,36 @@ textarea:focus-visible {
   margin: 0;
   font-size: 13px;
   font-weight: 650;
+}
+
+.live-run-strip {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-bottom: 1px solid #c7dfd5;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+}
+
+.live-run-strip > span {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.live-run-strip small {
+  overflow: hidden;
+  color: var(--muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .trace-summary {
@@ -1128,6 +1212,106 @@ textarea:focus-visible {
   font-size: 13px;
 }
 
+.workspace-dialog {
+  width: min(560px, 100%);
+}
+
+.workspace-dialog input + label,
+.workspace-source-label {
+  margin-top: 14px;
+}
+
+.workspace-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-muted);
+}
+
+.workspace-mode-switch button {
+  display: inline-flex;
+  min-width: 0;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  background: transparent;
+}
+
+.workspace-mode-switch button.active {
+  color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgb(20 35 28 / 10%);
+}
+
+.workspace-mode-panel {
+  display: flex;
+  min-height: 88px;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--accent);
+  background: var(--surface-muted);
+}
+
+.workspace-mode-panel p {
+  flex: 1;
+}
+
+.upload-panel,
+.code-panel {
+  display: block;
+}
+
+.upload-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.selected-files {
+  margin-top: 11px !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-panel label + input,
+.code-panel label + textarea {
+  margin-bottom: 12px;
+}
+
+.dialog textarea {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  outline: 0;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  white-space: nowrap !important;
+}
+
 .dialog p {
   margin: 0;
   color: var(--ink-soft);
@@ -1287,6 +1471,10 @@ textarea:focus-visible {
 
   .workspace-heading h1 {
     font-size: 13px;
+  }
+
+  .workspace-context {
+    display: none;
   }
 
   .message-stream {
