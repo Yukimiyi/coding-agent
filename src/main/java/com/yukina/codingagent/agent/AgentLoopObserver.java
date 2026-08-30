@@ -13,6 +13,21 @@ public interface AgentLoopObserver {
     default void onIterationStarted(int iteration) {
     }
 
+    /**
+     * 在新一轮分析开始时发布可安全展示的简短摘要。
+     * 此摘要由程序生成，不包含模型的隐藏思维链。
+     */
+    default void onThought(int iteration, String summary) {
+    }
+
+    /** 在收到最终回答的公开文本增量时触发。 */
+    default void onAnswerDelta(int iteration, String delta) {
+    }
+
+    /** 在当前响应转为工具调用时清除已展示的中间文本。 */
+    default void onAnswerReset(int iteration) {
+    }
+
     /** 在模型响应到达后触发，仅暴露模型名称和工具调用数量。 */
     default void onModelResponse(int iteration, String model, int toolCallCount) {
     }

@@ -54,7 +54,9 @@ class AgentRunServiceTest {
         when(conversationAgentService.execute(any(), any(), any())).thenAnswer(invocation -> {
             var observer = (com.yukina.codingagent.agent.AgentLoopObserver) invocation.getArgument(1);
             observer.onIterationStarted(1);
+            observer.onThought(1, "分析任务并规划下一步");
             observer.onToolCompleted(toolStep());
+            observer.onAnswerDelta(1, "Done.");
             assertTrue(release.await(2, TimeUnit.SECONDS));
             return new ConversationChatResult("conversation-1", true, completed());
         });
@@ -70,7 +72,8 @@ class AgentRunServiceTest {
         assertEquals(AgentRunStatus.COMPLETED, snapshot.status());
         assertEquals(1, snapshot.toolSteps().size());
         assertEquals("read_file", snapshot.toolSteps().getFirst().toolName());
-        assertTrue(snapshot.lastSequence() >= 5);
+        assertEquals("Done.", snapshot.liveContent());
+        assertTrue(snapshot.lastSequence() >= 8);
     }
 
     /** 验证取消会中断后台执行且终态不会被完成结果覆盖。 */

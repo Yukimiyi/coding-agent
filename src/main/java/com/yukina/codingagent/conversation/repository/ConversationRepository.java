@@ -80,6 +80,16 @@ public class ConversationRepository {
         );
     }
 
+    /** 按最近活动时间列出未绑定工作空间的纯对话。 */
+    public List<Conversation> listRecentWithoutWorkspace(int limit) {
+        return jdbcTemplate.query(
+                "SELECT id, title, workspace_id, created_at, updated_at FROM conversations "
+                        + "WHERE workspace_id IS NULL ORDER BY updated_at DESC, id DESC LIMIT ?",
+                this::mapConversation,
+                limit
+        );
+    }
+
     /** 更新会话标题和最近活动时间。 */
     public boolean updateTitle(String id, String title, Instant now) {
         return jdbcTemplate.update(

@@ -1,6 +1,7 @@
 package com.yukina.codingagent.deepseek;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.List;
 
@@ -12,6 +13,7 @@ import java.util.List;
  * @param tools 可调用工具定义
  * @param thinking 思考模式配置
  * @param stream 是否使用流式响应
+ * @param streamOptions 流式 Token 用量返回配置
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record DeepSeekChatRequest(
@@ -19,7 +21,8 @@ public record DeepSeekChatRequest(
         List<DeepSeekMessage> messages,
         @JsonInclude(JsonInclude.Include.NON_EMPTY) List<DeepSeekToolDefinition> tools,
         Thinking thinking,
-        boolean stream
+        boolean stream,
+        @JsonProperty("stream_options") StreamOptions streamOptions
 ) {
 
     /**
@@ -28,5 +31,13 @@ public record DeepSeekChatRequest(
      * @param type 模式类型
      */
     public record Thinking(String type) {
+    }
+
+    /**
+     * DeepSeek 流式响应附加配置。
+     *
+     * @param includeUsage 是否在结束前返回完整 Token 用量
+     */
+    public record StreamOptions(@JsonProperty("include_usage") boolean includeUsage) {
     }
 }

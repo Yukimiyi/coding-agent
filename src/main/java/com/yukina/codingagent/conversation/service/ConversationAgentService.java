@@ -17,6 +17,7 @@ import com.yukina.codingagent.workspace.service.WorkspaceLockManager;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 编排一轮有状态 Agent 对话，并协调会话、上下文和执行结果持久化。
@@ -61,6 +62,16 @@ public class ConversationAgentService {
     /** 创建或加载指定项目中的会话，并同步执行当前任务。 */
     public ConversationChatResult chat(String requestedConversationId, String workspaceId, String task) {
         PreparedConversation prepared = prepare(requestedConversationId, workspaceId, task);
+        if (prepared.workspace() == null) {
+            return lockManager.withLock(
+                    prepared.conversationId(),
+                    () -> runConversationTurn(
+                            prepared,
+                            AgentLoopObserver.NONE,
+                            AgentRunCancellation.NONE
+                    )
+            );
+        }
         return workspaceExecutionContext.withWorkspace(
                 workspaceService.rootPath(prepared.workspace()),
                 () -> workspaceLockManager.withLock(
@@ -98,14 +109,19 @@ public class ConversationAgentService {
         Conversation conversation;
         Workspace workspace;
         if (created) {
-            workspace = workspaceService.get(requestedWorkspaceId);
-            conversation = conversationService.create(task, workspace.id());
+            workspace = requestedWorkspaceId == null || requestedWorkspaceId.isBlank()
+                    ? null
+                    : workspaceService.get(requestedWorkspaceId);
+            conversation = conversationService.create(task, workspace == null ? null : workspace.id());
         } else {
             conversation = conversationService.get(requestedConversationId);
-            workspace = workspaceService.get(conversation.workspaceId());
-            if (requestedWorkspaceId != null
-                    && !requestedWorkspaceId.isBlank()
-                    && !workspace.id().equals(requestedWorkspaceId)) {
+            workspace = conversation.workspaceId() == null
+                    ? null
+                    : workspaceService.get(conversation.workspaceId());
+            String normalizedRequestedWorkspaceId = requestedWorkspaceId == null
+                    || requestedWorkspaceId.isBlank() ? null : requestedWorkspaceId;
+            if (!Objects.equals(conversation.workspaceId(), normalizedRequestedWorkspaceId)
+                    && normalizedRequestedWorkspaceId != null) {
                 throw new IllegalArgumentException("Conversation belongs to a different project");
             }
         }
@@ -122,6 +138,12 @@ public class ConversationAgentService {
     ) {
         if (prepared == null) {
             throw new IllegalArgumentException("prepared conversation must not be null");
+        }
+        if (prepared.workspace() == null) {
+            return lockManager.withInterruptibleLock(
+                    prepared.conversationId(),
+                    () -> runConversationTurn(prepared, observer, cancellation)
+            );
         }
         return workspaceExecutionContext.withWorkspace(
                 workspaceService.rootPath(prepared.workspace()),
@@ -149,7 +171,9 @@ public class ConversationAgentService {
         contextManager.appendSuccess(conversationId, ConversationMessage.Role.USER, prepared.task());
 
         try {
-            AgentRunResult result = agentLoop.run(prepared.task(), history, observer, cancellation);
+            AgentRunResult result = prepared.workspace() == null
+                    ? agentLoop.runWithoutTools(prepared.task(), history, observer, cancellation)
+                    : agentLoop.run(prepared.task(), history, observer, cancellation);
             if (result.completed() && result.answer() != null && !result.answer().isBlank()) {
                 contextManager.appendSuccess(
                         conversationId,
@@ -190,5 +214,9 @@ public class ConversationAgentService {
             String task,
             Workspace workspace
     ) {
+        /** 返回当前运行固定的工作空间 ID；纯对话返回 null。 */
+        public String workspaceId() {
+            return workspace == null ? null : workspace.id();
+        }
     }
 }

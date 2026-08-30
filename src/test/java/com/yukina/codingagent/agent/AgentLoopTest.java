@@ -3,6 +3,7 @@ package com.yukina.codingagent.agent;
 import com.yukina.codingagent.deepseek.DeepSeekChatResponse;
 import com.yukina.codingagent.deepseek.DeepSeekClient;
 import com.yukina.codingagent.deepseek.DeepSeekMessage;
+import com.yukina.codingagent.deepseek.DeepSeekStreamObserver;
 import com.yukina.codingagent.deepseek.DeepSeekToolCall;
 import com.yukina.codingagent.deepseek.DeepSeekToolDefinition;
 import com.yukina.codingagent.tool.AgentTool;
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -37,7 +39,7 @@ class AgentLoopTest {
     @Test
     void executesToolAndReturnsFinalAnswer() throws Exception {
         DeepSeekClient client = mock(DeepSeekClient.class);
-        when(client.chat(anyList(), anyList())).thenReturn(
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
                 response(toolMessage(call("echo", "call-1", "{\"text\":\"hello\"}")), "tool_calls", 5),
                 response(DeepSeekMessage.assistant("Echo completed.", null, null), "stop", 7)
         );
@@ -55,7 +57,7 @@ class AgentLoopTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<DeepSeekMessage>> messages = ArgumentCaptor.forClass(List.class);
-        verify(client, times(2)).chat(messages.capture(), anyList());
+        verify(client, times(2)).chatStream(messages.capture(), anyList(), any());
         List<DeepSeekMessage> secondRequest = messages.getAllValues().get(1);
         assertEquals(List.of("system", "user", "assistant", "tool"), secondRequest.stream()
                 .map(DeepSeekMessage::role)
@@ -69,7 +71,7 @@ class AgentLoopTest {
     void feedsToolFailureBackToModelForRecovery() {
         DeepSeekClient client = mock(DeepSeekClient.class);
         DeepSeekToolCall missingTool = call("missing", "call-missing", "{}");
-        when(client.chat(anyList(), anyList())).thenReturn(
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
                 response(toolMessage(missingTool), "tool_calls", 2),
                 response(DeepSeekMessage.assistant("I could not use that tool.", null, null), "stop", 3)
         );
@@ -81,6 +83,24 @@ class AgentLoopTest {
         assertEquals("TOOL_NOT_FOUND", result.toolSteps().getFirst().error().code());
     }
 
+    /** 验证完全相同的确定性工具失败不会一直消耗循环轮数。 */
+    @Test
+    void stopsAfterRepeatedIdenticalToolFailure() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(toolMessage(call("missing", "call-missing-1", "{}")), "tool_calls", 2),
+                response(toolMessage(call("missing", "call-missing-2", "{}")), "tool_calls", 2)
+        );
+
+        AgentRunResult result = loop(client, 16, 4).run("Repeat a missing tool");
+
+        assertFalse(result.completed());
+        assertEquals(AgentRunResult.StopReason.REPEATED_TOOL_FAILURE, result.stopReason());
+        assertEquals(2, result.iterations());
+        assertEquals(2, result.toolSteps().size());
+        verify(client, times(2)).chatStream(anyList(), anyList(), any());
+    }
+
     /** 验证达到最大循环轮数后停止执行。 */
     @Test
     void stopsAtMaximumIterations() {
@@ -90,7 +110,7 @@ class AgentLoopTest {
                 "tool_calls",
                 1
         );
-        when(client.chat(anyList(), anyList())).thenReturn(repeatedCall);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(repeatedCall);
 
         AgentRunResult result = loop(client, 2, 4).run("Keep calling tools");
 
@@ -108,7 +128,7 @@ class AgentLoopTest {
                 call("echo", "call-1", "{}"),
                 call("echo", "call-2", "{}")
         ));
-        when(client.chat(anyList(), anyList())).thenReturn(response(assistant, "tool_calls", 1));
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(response(assistant, "tool_calls", 1));
 
         AgentRunResult result = loop(client, 4, 1).run("Call too many tools");
 
@@ -121,7 +141,7 @@ class AgentLoopTest {
     @Test
     void publishesIterationAndToolEventsInOrder() {
         DeepSeekClient client = mock(DeepSeekClient.class);
-        when(client.chat(anyList(), anyList())).thenReturn(
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
                 response(toolMessage(call("echo", "call-live", "{\"text\":\"live\"}")), "tool_calls", 2),
                 response(DeepSeekMessage.assistant("Done.", null, null), "stop", 2)
         );
@@ -130,6 +150,11 @@ class AgentLoopTest {
             @Override
             public void onIterationStarted(int iteration) {
                 events.add("iteration:" + iteration);
+            }
+
+            @Override
+            public void onThought(int iteration, String summary) {
+                events.add("thought:" + iteration);
             }
 
             @Override
@@ -152,12 +177,43 @@ class AgentLoopTest {
 
         assertEquals(List.of(
                 "iteration:1",
+                "thought:1",
                 "model:1:1",
                 "tool-start:echo",
                 "tool-end:echo",
                 "iteration:2",
+                "thought:2",
                 "model:2:0"
         ), events);
+    }
+
+    /** 验证模型公开回答增量会原样转发给 Agent 观察器。 */
+    @Test
+    void forwardsStreamedAnswerDeltas() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenAnswer(invocation -> {
+            DeepSeekStreamObserver streamObserver = invocation.getArgument(2);
+            streamObserver.onContentDelta("Done");
+            streamObserver.onContentDelta(".");
+            return response(DeepSeekMessage.assistant("Done.", null, null), "stop", 2);
+        });
+        List<String> deltas = new java.util.ArrayList<>();
+        AgentLoopObserver observer = new AgentLoopObserver() {
+            @Override
+            public void onAnswerDelta(int iteration, String delta) {
+                deltas.add(iteration + ":" + delta);
+            }
+        };
+
+        AgentRunResult result = loop(client, 4, 4).run(
+                "Stream the answer",
+                List.of(),
+                observer,
+                AgentRunCancellation.NONE
+        );
+
+        assertEquals(List.of("1:Done", "1:."), deltas);
+        assertEquals("Done.", result.answer());
     }
 
     /** 验证预先取消的任务不会继续调用模型。 */
@@ -171,6 +227,29 @@ class AgentLoopTest {
                 () -> loop(client, 4, 4).run("Do not run", List.of(), AgentLoopObserver.NONE, cancelled::get)
         );
         verifyNoInteractions(client);
+    }
+
+    /** 验证纯对话不会向模型暴露工作空间工具。 */
+    @Test
+    void omitsToolsForChatOnlyConversation() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(DeepSeekMessage.assistant("Use a list to store the values.", null, null), "stop", 3)
+        );
+
+        AgentRunResult result = loop(client, 4, 4).runWithoutTools(
+                "How should I model this?",
+                List.of(),
+                AgentLoopObserver.NONE,
+                AgentRunCancellation.NONE
+        );
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DeepSeekToolDefinition>> tools = ArgumentCaptor.forClass(List.class);
+        verify(client).chatStream(anyList(), tools.capture(), any());
+        assertTrue(tools.getValue().isEmpty());
+        assertTrue(result.completed());
+        assertTrue(result.toolSteps().isEmpty());
     }
 
     /** 使用测试边界配置创建 Agent 循环。 */

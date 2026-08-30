@@ -38,7 +38,8 @@ public record AgentRunResult(
         EMPTY_RESPONSE,
         MAX_ITERATIONS,
         TOOL_CALL_LIMIT,
-        INVALID_TOOL_CALL
+        INVALID_TOOL_CALL,
+        REPEATED_TOOL_FAILURE
     }
 
     /**

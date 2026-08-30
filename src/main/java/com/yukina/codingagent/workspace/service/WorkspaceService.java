@@ -4,6 +4,7 @@ import com.yukina.codingagent.workspace.WorkspaceRegistryProperties;
 import com.yukina.codingagent.workspace.exception.WorkspaceConflictException;
 import com.yukina.codingagent.workspace.exception.WorkspaceNotFoundException;
 import com.yukina.codingagent.workspace.model.Workspace;
+import com.yukina.codingagent.workspace.model.WorkspaceType;
 import com.yukina.codingagent.workspace.repository.WorkspaceRepository;
 import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
@@ -44,6 +45,9 @@ public class WorkspaceService {
     public synchronized void initialize() {
         storageRoot = createAndResolveDirectory(registryProperties.storageRoot());
         for (Workspace registered : repository.list()) {
+            if (registered.type() == WorkspaceType.LOCAL) {
+                continue;
+            }
             Workspace workspace = migrateLegacyDefaultDirectory(registered);
             if (!isManagedProject(workspace)) {
                 if (repository.countConversations(workspace.id()) > 0) {
@@ -105,15 +109,14 @@ public class WorkspaceService {
 
     /** 在托管存储目录下创建一个空白项目。 */
     public synchronized Workspace create(String name) {
-        if (repository.count() >= registryProperties.maxWorkspaces()) {
-            throw new WorkspaceConflictException("Project workspace limit reached");
-        }
+        ensureCapacity();
         String workspaceId = UUID.randomUUID().toString();
         Path root = createManagedDirectory(workspaceId);
         try {
             return repository.create(
                     workspaceId,
                     normalizeName(name, "新项目"),
+                    WorkspaceType.MANAGED,
                     root.toString(),
                     Instant.now()
             );
@@ -121,6 +124,23 @@ public class WorkspaceService {
             deleteEmptyDirectory(root);
             throw exception;
         }
+    }
+
+    /** 注册用户明确选择的真实本地目录，后续工具会直接读写其中的文件。 */
+    public synchronized Workspace registerLocal(String name, String requestedPath) {
+        ensureCapacity();
+        Path root = resolveLocalDirectory(requestedPath);
+        repository.findByRootPath(root.toString()).ifPresent(existing -> {
+            throw new WorkspaceConflictException("Local project is already registered: " + existing.name());
+        });
+        String fallback = root.getFileName() == null ? "本地项目" : root.getFileName().toString();
+        return repository.create(
+                UUID.randomUUID().toString(),
+                normalizeName(name, fallback),
+                WorkspaceType.LOCAL,
+                root.toString(),
+                Instant.now()
+        );
     }
 
     /** 修改项目展示名称。 */
@@ -133,25 +153,38 @@ public class WorkspaceService {
         return get(workspaceId);
     }
 
-    /** 删除未绑定对话的项目注册，并在项目为空时回收目录。 */
+    /** 删除未绑定对话的项目；托管文件一并删除，本地项目只解除注册。 */
     public synchronized void delete(String workspaceId) {
         Workspace workspace = get(workspaceId);
         if (repository.countConversations(workspaceId) > 0) {
             throw new WorkspaceConflictException("Project still has conversations");
         }
+        if (workspace.type() == WorkspaceType.MANAGED) {
+            deleteManagedDirectory(Path.of(workspace.rootPath()));
+        }
         if (!repository.delete(workspaceId)) {
             throw new WorkspaceNotFoundException(workspaceId);
         }
-        deleteEmptyDirectory(Path.of(workspace.rootPath()));
     }
 
-    /** 将项目工作空间转换为工具执行根目录。 */
+    /** 将项目工作空间转换为经过实时校验的工具执行根目录。 */
     public Path rootPath(Workspace workspace) {
-        return Path.of(workspace.rootPath());
+        try {
+            Path root = Path.of(workspace.rootPath()).toAbsolutePath().normalize();
+            if (!Files.isDirectory(root)) {
+                throw new WorkspaceConflictException("Project directory is unavailable: " + workspace.name());
+            }
+            return root.toRealPath();
+        } catch (InvalidPathException | IOException exception) {
+            throw new WorkspaceConflictException("Project directory is unavailable: " + workspace.name());
+        }
     }
 
     /** 判断已有注册是否为存储容器中的直属项目目录。 */
     private boolean isManagedProject(Workspace workspace) {
+        if (workspace.type() != WorkspaceType.MANAGED) {
+            return false;
+        }
         try {
             Path root = Path.of(workspace.rootPath()).toAbsolutePath().normalize();
             return storageRoot.equals(root.getParent()) && Files.isDirectory(root);
@@ -183,6 +216,29 @@ public class WorkspaceService {
         }
     }
 
+    /** 校验注册容量，避免无限积累工作空间记录。 */
+    private void ensureCapacity() {
+        if (repository.count() >= registryProperties.maxWorkspaces()) {
+            throw new WorkspaceConflictException("Project workspace limit reached");
+        }
+    }
+
+    /** 将用户输入转换为存在、可访问且规范化的绝对本地目录。 */
+    private static Path resolveLocalDirectory(String requestedPath) {
+        if (requestedPath == null || requestedPath.isBlank()) {
+            throw new IllegalArgumentException("path must not be blank");
+        }
+        try {
+            Path root = Path.of(requestedPath.trim());
+            if (!root.isAbsolute() || !Files.isDirectory(root)) {
+                throw new IllegalArgumentException("path must be an existing absolute directory");
+            }
+            return root.toRealPath();
+        } catch (InvalidPathException | IOException exception) {
+            throw new IllegalArgumentException("path must be an existing absolute directory");
+        }
+    }
+
     /** 规范化项目名称。 */
     private static String normalizeName(String name, String fallback) {
         String normalized = name == null ? "" : name.trim().replaceAll("\\s+", " ");
@@ -194,12 +250,34 @@ public class WorkspaceService {
                 : normalized.substring(0, MAX_NAME_LENGTH);
     }
 
-    /** 尽力回收空项目目录，不删除其中已有文件。 */
+    /** 尽力回收创建失败后仍为空的托管目录。 */
     private static void deleteEmptyDirectory(Path root) {
         try {
             Files.deleteIfExists(root);
         } catch (IOException ignored) {
             // 非空项目保留文件，避免移除注册时造成意外数据丢失。
+        }
+    }
+
+    /** 删除存储容器中的托管项目，并拒绝操作任何容器外路径。 */
+    private void deleteManagedDirectory(Path requestedRoot) {
+        Path root = requestedRoot.toAbsolutePath().normalize();
+        if (!storageRoot.equals(root.getParent())) {
+            throw new WorkspaceConflictException("Managed project is outside the configured storage root");
+        }
+        try {
+            if (!Files.exists(root)) {
+                return;
+            }
+            List<Path> paths;
+            try (var stream = Files.walk(root)) {
+                paths = stream.sorted(java.util.Comparator.reverseOrder()).toList();
+            }
+            for (Path path : paths) {
+                Files.deleteIfExists(path);
+            }
+        } catch (IOException exception) {
+            throw new WorkspaceConflictException("Unable to delete managed project files");
         }
     }
 }

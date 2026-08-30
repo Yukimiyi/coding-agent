@@ -31,16 +31,16 @@ public class ConversationService {
         this.contextManager = contextManager;
     }
 
-    /** 创建绑定到指定项目工作空间的新会话。 */
+    /** 创建会话；workspaceId 为空时表示不访问任何项目文件。 */
     public Conversation create(String title, String workspaceId) {
-        if (workspaceId == null || workspaceId.isBlank()) {
-            throw new IllegalArgumentException("workspaceId must not be blank");
-        }
+        String normalizedWorkspaceId = workspaceId == null || workspaceId.isBlank()
+                ? null
+                : workspaceId;
         Instant now = Instant.now();
         return repository.create(
                 UUID.randomUUID().toString(),
                 normalizeTitle(title),
-                workspaceId,
+                normalizedWorkspaceId,
                 now
         );
     }
@@ -68,6 +68,14 @@ public class ConversationService {
             throw new IllegalArgumentException("limit must be between 1 and 100");
         }
         return repository.listRecent(workspaceId, limit);
+    }
+
+    /** 列出未绑定项目的纯对话。 */
+    public List<Conversation> listWithoutWorkspace(int limit) {
+        if (limit < 1 || limit > 100) {
+            throw new IllegalArgumentException("limit must be between 1 and 100");
+        }
+        return repository.listRecentWithoutWorkspace(limit);
     }
 
     /** 规范化并修改会话标题。 */

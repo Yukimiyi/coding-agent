@@ -1,11 +1,15 @@
 CREATE TABLE IF NOT EXISTS workspaces (
     id VARCHAR(36) PRIMARY KEY,
     name VARCHAR(120) NOT NULL,
+    type VARCHAR(16) DEFAULT 'MANAGED' NOT NULL,
     root_path VARCHAR(1024) NOT NULL,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     CONSTRAINT uq_workspace_root_path UNIQUE (root_path)
 );
+
+ALTER TABLE workspaces
+    ADD COLUMN IF NOT EXISTS type VARCHAR(16) DEFAULT 'MANAGED' NOT NULL;
 
 CREATE TABLE IF NOT EXISTS conversations (
     id VARCHAR(36) PRIMARY KEY,

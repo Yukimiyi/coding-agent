@@ -76,6 +76,11 @@ public final class ToolArguments {
     /** 读取由非空字符串组成且数量受限的必填数组参数。 */
     public static List<String> requiredTextList(JsonNode arguments, String name, int maxItems) {
         JsonNode value = arguments.get(name);
+        return requiredTextListValue(value, name, maxItems);
+    }
+
+    /** 校验一个已经定位的 JSON 节点是数量受限的非空字符串数组。 */
+    public static List<String> requiredTextListValue(JsonNode value, String name, int maxItems) {
         if (value == null || !value.isArray() || value.isEmpty()) {
             throw new ToolExecutionException("INVALID_ARGUMENTS", name + " must be a non-empty string array");
         }

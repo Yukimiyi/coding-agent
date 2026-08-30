@@ -3,6 +3,7 @@ package com.yukina.codingagent.workspace.service;
 import com.yukina.codingagent.conversation.repository.ConversationRepository;
 import com.yukina.codingagent.workspace.WorkspaceRegistryProperties;
 import com.yukina.codingagent.workspace.model.Workspace;
+import com.yukina.codingagent.workspace.model.WorkspaceType;
 import com.yukina.codingagent.workspace.repository.WorkspaceRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -77,6 +78,7 @@ class WorkspaceServiceTest {
         assertEquals(storageRoot.toRealPath(), root.getParent());
         assertEquals(created.id(), root.getFileName().toString());
         assertEquals("Project", created.name());
+        assertEquals(WorkspaceType.MANAGED, created.type());
         assertTrue(Files.isDirectory(root));
         assertEquals(1, workspaceService.list().size());
     }
@@ -117,5 +119,21 @@ class WorkspaceServiceTest {
         conversationRepository.create("conversation-1", "External", external.id(), Instant.now());
 
         assertThrows(IllegalStateException.class, workspaceService::initialize);
+    }
+
+    /** 验证本地项目引用真实目录，解除注册时不会删除用户文件。 */
+    @Test
+    void registersAndSafelyRemovesLocalProject() throws Exception {
+        workspaceService.initialize();
+        Path localRoot = Files.createDirectory(temporaryRoot.resolve("local-project"));
+        Path source = Files.writeString(localRoot.resolve("Main.java"), "class Main {}");
+
+        Workspace workspace = workspaceService.registerLocal("Local", localRoot.toString());
+
+        assertEquals(WorkspaceType.LOCAL, workspace.type());
+        assertEquals(localRoot.toRealPath(), workspaceService.rootPath(workspace));
+        workspaceService.delete(workspace.id());
+        assertTrue(Files.exists(source));
+        assertTrue(workspaceService.list().isEmpty());
     }
 }

@@ -4,6 +4,7 @@ import com.yukina.codingagent.workspace.WorkspaceImportProperties;
 import com.yukina.codingagent.workspace.exception.WorkspaceConflictException;
 import com.yukina.codingagent.workspace.model.Workspace;
 import com.yukina.codingagent.workspace.model.WorkspaceImportResult;
+import com.yukina.codingagent.workspace.model.WorkspaceType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -57,6 +58,9 @@ public class WorkspaceImportService {
         }
 
         Workspace workspace = workspaceService.get(workspaceId);
+        if (workspace.type() != WorkspaceType.MANAGED) {
+            throw new IllegalArgumentException("Files can only be uploaded into managed projects");
+        }
         Path root = workspaceService.rootPath(workspace).toAbsolutePath().normalize();
         List<PendingFile> pendingFiles = validateFiles(root, files, relativePaths);
         List<Path> createdFiles = new ArrayList<>();

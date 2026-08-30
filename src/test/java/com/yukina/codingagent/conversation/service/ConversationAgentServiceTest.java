@@ -31,6 +31,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.any;
@@ -136,6 +137,19 @@ class ConversationAgentServiceTest {
         MessagePage page = conversationService.messages(first.conversationId(), null, 10);
         assertEquals(4, page.messages().size());
         assertEquals("Second answer", page.messages().getLast().content());
+    }
+
+    /** 验证未选择项目时创建纯对话，并使用不带工具的模型循环。 */
+    @Test
+    void createsChatOnlyConversationWithoutWorkspaceTools() {
+        when(agentLoop.runWithoutTools(eq("Explain this code"), anyList(), any(), any()))
+                .thenReturn(completed("Explanation"));
+
+        ConversationChatResult result = conversationAgentService.chat(null, null, "Explain this code");
+
+        assertTrue(result.conversationCreated());
+        assertNull(conversationService.get(result.conversationId()).workspaceId());
+        verify(agentLoop).runWithoutTools(eq("Explain this code"), anyList(), any(), any());
     }
 
     /** 创建已成功完成的 Agent 测试结果。 */

@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   AlertTriangle,
-  Code2,
   FileUp,
   FolderGit2,
   FolderUp,
@@ -25,6 +24,9 @@ const selectedWorkspaceId = ref(null)
 const selectedConversationId = ref(null)
 const messages = ref([])
 const toolSteps = ref([])
+const runActivities = ref([])
+const streamedAnswer = ref('')
+const processedRunEvents = ref(new Set())
 const nextCursor = ref(null)
 const hasMoreMessages = ref(false)
 const loadingConversations = ref(true)
@@ -47,14 +49,13 @@ const dialogTitle = ref('')
 const dialogInput = ref(null)
 const workspaceDialogOpen = ref(false)
 const workspaceName = ref('')
-const workspaceMode = ref('conversation')
+const workspaceMode = ref('blank')
 const workspaceFiles = ref([])
-const workspaceCodePath = ref('src/Main.java')
-const workspaceCode = ref('')
 const workspaceNameInput = ref(null)
 const fileInput = ref(null)
 const folderInput = ref(null)
 const registeringWorkspace = ref(false)
+const downloadingWorkspace = ref(false)
 
 let loadSequence = 0
 let eventSource = null
@@ -70,6 +71,7 @@ const activeWorkspace = computed(() =>
 )
 
 const workspaceTitle = computed(() => activeConversation.value?.title || '新对话')
+const workspaceContextLabel = computed(() => activeWorkspace.value?.name || '纯对话')
 
 const canCreateWorkspace = computed(() => {
   if (registeringWorkspace.value) {
@@ -77,9 +79,6 @@ const canCreateWorkspace = computed(() => {
   }
   if (workspaceMode.value === 'upload') {
     return workspaceFiles.value.length > 0
-  }
-  if (workspaceMode.value === 'code') {
-    return workspaceCodePath.value.trim() && workspaceCode.value.length > 0
   }
   return true
 })
@@ -96,13 +95,9 @@ const selectedFilesLabel = computed(() => {
 
 onMounted(async () => {
   await Promise.all([checkHealth(), refreshWorkspaces()])
-  if (!selectedWorkspaceId.value) {
-    const storedWorkspaceId = localStorage.getItem(workspaceStorageKey)
-    selectedWorkspaceId.value =
-      workspaces.value.find((workspace) => workspace.id === storedWorkspaceId)?.id ||
-      workspaces.value[0]?.id ||
-      null
-  }
+  const storedWorkspaceId = localStorage.getItem(workspaceStorageKey)
+  selectedWorkspaceId.value =
+    workspaces.value.find((workspace) => workspace.id === storedWorkspaceId)?.id || null
   await refreshConversations()
   const pendingRun = readPendingRun()
   if (pendingRun) {
@@ -126,9 +121,7 @@ async function checkHealth() {
 async function refreshConversations() {
   loadingConversations.value = true
   try {
-    conversations.value = selectedWorkspaceId.value
-      ? await agentApi.listConversations(selectedWorkspaceId.value)
-      : []
+    conversations.value = await agentApi.listConversations(selectedWorkspaceId.value)
   } catch (error) {
     errorMessage.value = error.message
   } finally {
@@ -153,13 +146,12 @@ async function selectConversation(conversationId) {
     return
   }
   const conversation = conversations.value.find((item) => item.id === conversationId)
-  if (conversation?.workspaceId) {
-    selectedWorkspaceId.value = conversation.workspaceId
-    localStorage.setItem(workspaceStorageKey, conversation.workspaceId)
-  }
+  selectedWorkspaceId.value = conversation?.workspaceId || null
+  persistWorkspaceSelection(selectedWorkspaceId.value)
   selectedConversationId.value = conversationId
   messages.value = []
   toolSteps.value = []
+  resetLiveRunOutput()
   errorMessage.value = ''
   sidebarOpen.value = false
   await loadMessages(conversationId)
@@ -167,14 +159,16 @@ async function selectConversation(conversationId) {
 }
 
 async function switchWorkspace(workspaceId) {
-  if (busy.value || !workspaceId || workspaceId === selectedWorkspaceId.value) {
+  const normalizedWorkspaceId = workspaceId || null
+  if (busy.value || normalizedWorkspaceId === selectedWorkspaceId.value) {
     return
   }
-  selectedWorkspaceId.value = workspaceId
-  localStorage.setItem(workspaceStorageKey, workspaceId)
+  selectedWorkspaceId.value = normalizedWorkspaceId
+  persistWorkspaceSelection(normalizedWorkspaceId)
   selectedConversationId.value = null
   messages.value = []
   toolSteps.value = []
+  resetLiveRunOutput()
   nextCursor.value = null
   hasMoreMessages.value = false
   errorMessage.value = ''
@@ -226,6 +220,7 @@ function startNewConversation() {
   selectedConversationId.value = null
   messages.value = []
   toolSteps.value = []
+  resetLiveRunOutput()
   nextCursor.value = null
   hasMoreMessages.value = false
   errorMessage.value = ''
@@ -234,7 +229,7 @@ function startNewConversation() {
 
 async function submitTask(task) {
   const normalizedTask = task.trim()
-  if (!normalizedTask || busy.value || !selectedWorkspaceId.value) {
+  if (!normalizedTask || busy.value) {
     return
   }
 
@@ -255,6 +250,7 @@ async function submitTask(task) {
   currentToolName.value = ''
   errorMessage.value = ''
   toolSteps.value = []
+  resetLiveRunOutput()
 
   const pendingRun = {
     requestId: window.crypto?.randomUUID?.() || `request-${Date.now()}`,
@@ -347,15 +343,18 @@ async function restoreConversationRun(conversationId) {
 function attachAcceptedRun(accepted) {
   activeRunId.value = accepted.runId
   selectedConversationId.value = accepted.conversationId
-  selectedWorkspaceId.value = accepted.workspaceId
-  localStorage.setItem(workspaceStorageKey, accepted.workspaceId)
+  selectedWorkspaceId.value = accepted.workspaceId || null
+  persistWorkspaceSelection(selectedWorkspaceId.value)
   runStatus.value = accepted.status
   busy.value = true
 }
 
 async function attachSnapshot(snapshot) {
-  selectedWorkspaceId.value = snapshot.workspaceId
-  localStorage.setItem(workspaceStorageKey, snapshot.workspaceId)
+  if (activeRunId.value !== snapshot.runId) {
+    resetLiveRunOutput()
+  }
+  selectedWorkspaceId.value = snapshot.workspaceId || null
+  persistWorkspaceSelection(selectedWorkspaceId.value)
   selectedConversationId.value = snapshot.conversationId
   applyRunSnapshot(snapshot)
   await refreshConversations()
@@ -394,21 +393,68 @@ function connectRunEvents(runId) {
 }
 
 function handleRunEvent(event) {
+  if (event.sequence && processedRunEvents.value.has(event.sequence)) {
+    return
+  }
+  if (event.sequence) {
+    processedRunEvents.value.add(event.sequence)
+  }
   runStatus.value = event.status
   if (event.iteration) {
     currentIteration.value = event.iteration
   }
   if (event.type === 'ITERATION_STARTED') {
     currentToolName.value = ''
+  } else if (event.type === 'PERCEPTION' || event.type === 'THOUGHT') {
+    appendRunActivity({
+      id: event.sequence,
+      type: event.type.toLowerCase(),
+      message: event.message || '',
+      iteration: event.iteration,
+    })
+  } else if (event.type === 'ANSWER_DELTA') {
+    streamedAnswer.value += event.message || ''
+  } else if (event.type === 'ANSWER_RESET') {
+    streamedAnswer.value = ''
   } else if (event.type === 'TOOL_STARTED') {
     currentToolName.value = event.toolName || ''
+    appendRunActivity({
+      id: event.sequence,
+      type: 'action',
+      toolCallId: event.toolCallId,
+      toolName: event.toolName || 'unknown_tool',
+      detail: event.arguments || '{}',
+      iteration: event.iteration,
+    })
   } else if (event.type === 'TOOL_COMPLETED' && event.toolStep) {
     currentToolName.value = ''
     upsertToolStep(event.toolStep)
+    appendRunActivity({
+      id: event.sequence,
+      type: 'observation',
+      toolCallId: event.toolStep.toolCallId,
+      toolName: event.toolStep.toolName || 'unknown_tool',
+      success: event.toolStep.success,
+      detail: event.toolStep.content || event.toolStep.error?.message || '',
+      iteration: event.iteration,
+    })
   }
   if (isTerminal(event.status)) {
     finishRun(event)
   }
+}
+
+function appendRunActivity(activity) {
+  runActivities.value.push({
+    ...activity,
+    id: activity.id || `${activity.type}-${runActivities.value.length + 1}`,
+  })
+}
+
+function resetLiveRunOutput() {
+  runActivities.value = []
+  streamedAnswer.value = ''
+  processedRunEvents.value = new Set()
 }
 
 function applyRunSnapshot(snapshot) {
@@ -483,6 +529,7 @@ function resetRunState(clearTrace = true) {
   currentToolName.value = ''
   if (clearTrace) {
     toolSteps.value = []
+    resetLiveRunOutput()
   }
 }
 
@@ -506,12 +553,18 @@ function clearPendingRun() {
   sessionStorage.removeItem(activeRunStorageKey)
 }
 
+function persistWorkspaceSelection(workspaceId) {
+  if (workspaceId) {
+    localStorage.setItem(workspaceStorageKey, workspaceId)
+  } else {
+    localStorage.removeItem(workspaceStorageKey)
+  }
+}
+
 function openWorkspaceDialog() {
   workspaceName.value = ''
-  workspaceMode.value = 'conversation'
+  workspaceMode.value = 'blank'
   workspaceFiles.value = []
-  workspaceCodePath.value = 'src/Main.java'
-  workspaceCode.value = ''
   sidebarOpen.value = false
   workspaceDialogOpen.value = true
   nextTick(() => workspaceNameInput.value?.focus())
@@ -524,7 +577,6 @@ function closeWorkspaceDialog() {
   workspaceDialogOpen.value = false
   workspaceName.value = ''
   workspaceFiles.value = []
-  workspaceCode.value = ''
 }
 
 function selectWorkspaceFiles(event) {
@@ -541,18 +593,12 @@ async function createWorkspace() {
     workspace = await agentApi.createWorkspace(workspaceName.value.trim())
     if (workspaceMode.value === 'upload') {
       await agentApi.uploadWorkspaceFiles(workspace.id, workspaceFiles.value)
-    } else if (workspaceMode.value === 'code') {
-      await agentApi.uploadWorkspaceCode(
-        workspace.id,
-        workspaceCodePath.value.trim(),
-        workspaceCode.value,
-      )
     }
     await refreshWorkspaces()
     workspaceDialogOpen.value = false
     await switchWorkspace(workspace.id)
   } catch (error) {
-    if (workspace) {
+    if (workspace?.type === 'MANAGED') {
       try {
         await agentApi.deleteWorkspace(workspace.id)
       } catch {
@@ -562,6 +608,21 @@ async function createWorkspace() {
     errorMessage.value = error.message
   } finally {
     registeringWorkspace.value = false
+  }
+}
+
+async function downloadWorkspace() {
+  if (!activeWorkspace.value || busy.value || downloadingWorkspace.value) {
+    return
+  }
+  downloadingWorkspace.value = true
+  errorMessage.value = ''
+  try {
+    await agentApi.downloadWorkspace(activeWorkspace.value.id, activeWorkspace.value.name)
+  } catch (error) {
+    errorMessage.value = error.message
+  } finally {
+    downloadingWorkspace.value = false
   }
 }
 
@@ -621,6 +682,7 @@ async function confirmDialog() {
       :workspace-loading="loadingWorkspaces"
       :busy="busy"
       :online="online"
+      :downloading-workspace="downloadingWorkspace"
       @close="sidebarOpen = false"
       @new="startNewConversation"
       @select="selectConversation"
@@ -628,6 +690,7 @@ async function confirmDialog() {
       @delete="openDeleteDialog"
       @workspace-change="switchWorkspace"
       @add-workspace="openWorkspaceDialog"
+      @download-workspace="downloadWorkspace"
     />
 
     <section class="workspace-column">
@@ -637,7 +700,7 @@ async function confirmDialog() {
         </button>
         <div class="workspace-heading">
           <h1>{{ workspaceTitle }}</h1>
-          <span v-if="activeWorkspace" class="workspace-context">{{ activeWorkspace.name }}</span>
+          <span class="workspace-context">{{ workspaceContextLabel }}</span>
           <span class="header-status" :class="{ offline: !online }">
             <span class="status-dot" />
             {{ online ? '服务在线' : '服务离线' }}
@@ -669,6 +732,8 @@ async function confirmDialog() {
         :run-status="runStatus"
         :current-iteration="currentIteration"
         :current-tool-name="currentToolName"
+        :activities="runActivities"
+        :streamed-answer="streamedAnswer"
         :cancelling="cancelling"
         @send="submitTask"
         @cancel="cancelRun"
@@ -752,10 +817,10 @@ async function confirmDialog() {
         <div class="workspace-mode-switch" role="tablist" aria-label="项目初始化方式">
           <button
             type="button"
-            :class="{ active: workspaceMode === 'conversation' }"
+            :class="{ active: workspaceMode === 'blank' }"
             role="tab"
-            :aria-selected="workspaceMode === 'conversation'"
-            @click="workspaceMode = 'conversation'"
+            :aria-selected="workspaceMode === 'blank'"
+            @click="workspaceMode = 'blank'"
           >
             <MessageSquareText :size="16" />
             空白项目
@@ -770,19 +835,9 @@ async function confirmDialog() {
             <FolderUp :size="16" />
             上传项目
           </button>
-          <button
-            type="button"
-            :class="{ active: workspaceMode === 'code' }"
-            role="tab"
-            :aria-selected="workspaceMode === 'code'"
-            @click="workspaceMode = 'code'"
-          >
-            <Code2 :size="16" />
-            粘贴代码
-          </button>
         </div>
 
-        <div v-if="workspaceMode === 'conversation'" class="workspace-mode-panel">
+        <div v-if="workspaceMode === 'blank'" class="workspace-mode-panel">
           <MessageSquareText :size="18" />
           <p>创建空白项目后，可以在多个对话中持续让 Agent 新建和修改文件。</p>
         </div>
@@ -811,26 +866,10 @@ async function confirmDialog() {
           <p class="selected-files" :title="selectedFilesLabel">{{ selectedFilesLabel }}</p>
         </div>
 
-        <div v-else class="workspace-mode-panel code-panel">
-          <label for="workspace-code-path">相对文件路径</label>
-          <input
-            id="workspace-code-path"
-            v-model="workspaceCodePath"
-            autocomplete="off"
-            placeholder="src/Main.java"
-          />
-          <label for="workspace-code">代码</label>
-          <textarea
-            id="workspace-code"
-            v-model="workspaceCode"
-            spellcheck="false"
-            placeholder="在此粘贴代码"
-          />
-        </div>
         <div class="dialog-actions">
           <button class="text-button secondary" type="button" @click="closeWorkspaceDialog">取消</button>
           <button class="text-button" type="submit" :disabled="!canCreateWorkspace">
-            {{ registeringWorkspace ? '创建中' : '创建' }}
+            {{ registeringWorkspace ? '处理中' : '创建' }}
           </button>
         </div>
       </form>

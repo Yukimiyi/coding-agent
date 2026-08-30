@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -18,6 +19,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 验证 DeepSeek HTTP 协议、工具调用消息和异常映射。 */
 class DeepSeekClientTest {
@@ -183,6 +185,60 @@ class DeepSeekClientTest {
         assertEquals("<project>...</project>", tool.path("content").asText());
     }
 
+    /** 验证公开回答文本会按 SSE 数据块实时回调并聚合为完整响应。 */
+    @Test
+    void streamsPublicAnswerDeltasAndUsage() throws Exception {
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        AtomicReference<String> accept = new AtomicReference<>();
+        startServer(exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            accept.set(exchange.getRequestHeaders().getFirst("Accept"));
+            respondStream(exchange, List.of(
+                    "{\"id\":\"stream-1\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"}}]}",
+                    "{\"id\":\"stream-1\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}",
+                    "{\"id\":\"stream-1\",\"model\":\"deepseek-v4-flash\",\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}"
+            ));
+        });
+        List<String> deltas = new ArrayList<>();
+
+        DeepSeekChatResponse response = createClient("test-api-key").chatStream(
+                List.of(DeepSeekMessage.user("Hello")),
+                List.of(),
+                deltas::add
+        );
+
+        assertEquals("text/event-stream", accept.get());
+        assertEquals(List.of("Hel", "lo"), deltas);
+        assertEquals("Hello", response.firstContent());
+        assertEquals(7, response.usage().totalTokens());
+        JsonNode json = objectMapper.readTree(requestBody.get());
+        assertTrue(json.path("stream").asBoolean());
+        assertTrue(json.path("stream_options").path("include_usage").asBoolean());
+    }
+
+    /** 验证流式工具调用的名称、参数与内部协议推理内容可跨块拼接。 */
+    @Test
+    void aggregatesStreamedToolCallFragments() throws Exception {
+        startServer(exchange -> respondStream(exchange, List.of(
+                "{\"id\":\"stream-tool\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"inspect \",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"\"}}]}}]}",
+                "{\"id\":\"stream-tool\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"file\",\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}"
+        )));
+        List<String> publicDeltas = new ArrayList<>();
+
+        DeepSeekChatResponse response = createClient("test-api-key").chatStream(
+                List.of(DeepSeekMessage.user("Read the file")),
+                List.of(readFileTool()),
+                publicDeltas::add
+        );
+
+        DeepSeekMessage message = response.firstMessage();
+        assertTrue(publicDeltas.isEmpty());
+        assertEquals("inspect file", message.reasoningContent());
+        assertEquals("call_1", message.toolCalls().getFirst().id());
+        assertEquals("read_file", message.toolCalls().getFirst().function().name());
+        assertEquals("{\"path\":\"README.md\"}", message.toolCalls().getFirst().function().arguments());
+    }
+
     /** 验证非成功 HTTP 状态码会保留在 API 异常中。 */
     @Test
     void exposesApiErrorStatus() throws Exception {
@@ -265,6 +321,17 @@ class DeepSeekClientTest {
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(statusCode, bytes.length);
         exchange.getResponseBody().write(bytes);
+    }
+
+    /** 按 DeepSeek SSE 格式写入多个数据块与结束标记。 */
+    private static void respondStream(HttpExchange exchange, List<String> chunks) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+        exchange.sendResponseHeaders(200, 0);
+        for (String chunk : chunks) {
+            exchange.getResponseBody().write(("data: " + chunk + "\n\n").getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
+        }
+        exchange.getResponseBody().write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
     }
 
     /** 表示单个测试 HTTP 请求处理动作。 */

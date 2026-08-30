@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import {
   Code2,
+  Download,
   FolderGit2,
   MessageSquare,
   Pencil,
@@ -21,6 +22,7 @@ const props = defineProps({
   workspaceLoading: Boolean,
   busy: Boolean,
   online: Boolean,
+  downloadingWorkspace: Boolean,
 })
 
 defineEmits([
@@ -31,9 +33,14 @@ defineEmits([
   'delete',
   'workspace-change',
   'add-workspace',
+  'download-workspace',
 ])
 
 const query = ref('')
+
+const selectedWorkspace = computed(() =>
+  props.workspaces.find((workspace) => workspace.id === props.selectedWorkspaceId),
+)
 
 const filteredConversations = computed(() => {
   const normalized = query.value.trim().toLocaleLowerCase('zh-CN')
@@ -82,15 +89,25 @@ function formatRelativeTime(value) {
     <div class="workspace-switcher">
       <FolderGit2 :size="16" />
       <select
-        :value="selectedWorkspaceId"
+        :value="selectedWorkspaceId || ''"
         :disabled="busy || workspaceLoading"
         aria-label="选择项目"
-        @change="$emit('workspace-change', $event.target.value)"
+        @change="$emit('workspace-change', $event.target.value || null)"
       >
+        <option value="">纯对话</option>
         <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">
-          {{ workspace.name }}
+          {{ workspace.name }}{{ workspace.type === 'LOCAL' ? '（本地）' : '' }}
         </option>
       </select>
+      <button
+        class="row-action"
+        type="button"
+        :title="selectedWorkspace?.type === 'MANAGED' ? '下载项目 ZIP' : '选择受管项目后下载'"
+        :disabled="busy || workspaceLoading || downloadingWorkspace || selectedWorkspace?.type !== 'MANAGED'"
+        @click="$emit('download-workspace')"
+      >
+        <Download :size="15" />
+      </button>
       <button
         class="row-action"
         type="button"
@@ -102,7 +119,7 @@ function formatRelativeTime(value) {
       </button>
     </div>
 
-    <button class="new-conversation-button" type="button" :disabled="busy || !selectedWorkspaceId" @click="$emit('new')">
+    <button class="new-conversation-button" type="button" :disabled="busy" @click="$emit('new')">
       <Plus :size="17" />
       新对话
     </button>

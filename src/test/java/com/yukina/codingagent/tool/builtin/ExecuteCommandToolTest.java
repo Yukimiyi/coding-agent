@@ -49,7 +49,9 @@ class ExecuteCommandToolTest {
                 Duration.ofMillis(500),
                 64,
                 16,
-                List.of("java", "git", "mvn")
+                1024,
+                List.of("java", "git", "mvn"),
+                List.of()
         );
         commandTool = new ExecuteCommandTool(
                 new WorkspacePathResolver(workspaceProperties),
@@ -83,6 +85,81 @@ class ExecuteCommandToolTest {
         assertEquals("project", result.path("workingDirectory").asText());
     }
 
+    /** 验证内联标准输入会写入子进程并在末尾发送 EOF。 */
+    @Test
+    void providesInlineStandardInput() throws Exception {
+        Files.writeString(workspace.resolve("EchoInput.java"), """
+                class EchoInput {
+                    public static void main(String[] args) throws Exception {
+                        System.out.print(new String(System.in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                }
+                """);
+
+        JsonNode result = execute("""
+                {"command":["java","EchoInput.java"],"stdin":"first line\\nsecond line\\n"}
+                """);
+
+        assertEquals(0, result.path("exitCode").asInt(), result::toPrettyString);
+        assertEquals("first line\nsecond line\n", result.path("stdout").asText());
+        assertEquals(23, result.path("stdinBytes").asInt());
+    }
+
+    /** 验证工作空间文件可以直接作为标准输入，不需要 Shell 重定向。 */
+    @Test
+    void providesWorkspaceFileAsStandardInput() throws Exception {
+        Files.writeString(workspace.resolve("ReadNumber.java"), """
+                class ReadNumber {
+                    public static void main(String[] args) {
+                        java.util.Scanner scanner = new java.util.Scanner(System.in);
+                        System.out.print(scanner.nextInt() * 2);
+                    }
+                }
+                """);
+        Files.writeString(workspace.resolve("input.txt"), "21\n");
+
+        JsonNode result = execute("""
+                {"command":["java","ReadNumber.java"],"stdin_file":"input.txt"}
+                """);
+
+        assertEquals(0, result.path("exitCode").asInt(), result::toPrettyString);
+        assertEquals("42", result.path("stdout").asText());
+        assertEquals(3, result.path("stdinBytes").asInt());
+    }
+
+    /** 验证未提供输入时仍会立即关闭 stdin，而不是让读取程序一直等待。 */
+    @Test
+    void closesStandardInputWhenNoInputWasProvided() throws Exception {
+        Files.writeString(workspace.resolve("ReadEof.java"), """
+                class ReadEof {
+                    public static void main(String[] args) throws Exception {
+                        System.out.print(System.in.read());
+                    }
+                }
+                """);
+
+        JsonNode result = execute("""
+                {"command":["java","ReadEof.java"],"timeout_seconds":3}
+                """);
+
+        assertFalse(result.path("timedOut").asBoolean(), result::toPrettyString);
+        assertEquals("-1", result.path("stdout").asText());
+        assertEquals(0, result.path("stdinBytes").asInt());
+    }
+
+    /** 验证两种标准输入来源不能同时使用。 */
+    @Test
+    void rejectsMultipleStandardInputSources() throws Exception {
+        ToolExecutionException exception = assertThrows(
+                ToolExecutionException.class,
+                () -> commandTool.execute(objectMapper.readTree("""
+                        {"command":["java","--version"],"stdin":"x","stdin_file":"input.txt"}
+                        """))
+        );
+
+        assertEquals("INVALID_ARGUMENTS", exception.code());
+    }
+
     /** 验证 Maven 等 Windows .cmd 包装器能够通过受控解释器执行。 */
     @Test
     void executesCommandWrapper() throws Exception {
@@ -92,6 +169,77 @@ class ExecuteCommandToolTest {
 
         assertEquals(0, result.path("exitCode").asInt(), result::toPrettyString);
         assertTrue(result.path("stdout").asText().contains("Apache Maven"));
+    }
+
+    /** 验证模型把命令数组额外编码成 JSON 字符串时仍可安全执行。 */
+    @Test
+    void acceptsJsonEncodedCommandArray() throws Exception {
+        var arguments = objectMapper.createObjectNode();
+        arguments.put("command", objectMapper.writeValueAsString(List.of("java", "--version")));
+
+        JsonNode result = objectMapper.readTree(commandTool.execute(arguments));
+
+        assertEquals(0, result.path("exitCode").asInt(), result::toPrettyString);
+        assertEquals("java", result.path("command").get(0).asText());
+        assertEquals("--version", result.path("command").get(1).asText());
+    }
+
+    /** 验证普通 Shell 命令字符串不会被自动拆分或绕过数组协议。 */
+    @Test
+    void rejectsPlainCommandString() throws Exception {
+        ToolExecutionException exception = assertThrows(
+                ToolExecutionException.class,
+                () -> commandTool.execute(objectMapper.readTree("{\"command\":\"java --version\"}"))
+        );
+
+        assertEquals("INVALID_ARGUMENTS", exception.code());
+        assertEquals("command must be a non-empty string array", exception.getMessage());
+    }
+
+    /** 验证可从服务端配置的额外目录发现白名单程序。 */
+    @Test
+    void resolvesExecutableFromConfiguredSearchPath() throws Exception {
+        assumeTrue(System.getProperty("os.name", "").toLowerCase().contains("win"));
+        Path tools = Files.createDirectories(workspace.resolve("tools"));
+        Files.writeString(tools.resolve("fake-compiler.cmd"), "@echo configured-tool\r\n");
+        CommandProperties commandProperties = new CommandProperties(
+                Duration.ofSeconds(3),
+                Duration.ofSeconds(5),
+                Duration.ofMillis(500),
+                64,
+                16,
+                1024,
+                List.of("fake-compiler"),
+                List.of(tools)
+        );
+        commandTool = new ExecuteCommandTool(
+                new WorkspacePathResolver(new WorkspaceProperties(workspace, 1024, 1024, 100, 50, 1024, 5)),
+                commandProperties,
+                objectMapper
+        );
+
+        JsonNode result = execute("""
+                {"command": ["fake-compiler"]}
+                """);
+
+        assertEquals(0, result.path("exitCode").asInt(), result::toPrettyString);
+        assertTrue(result.path("stdout").asText().contains("configured-tool"));
+    }
+
+    /** 验证工作空间根目录内生成的程序无需逐个加入全局白名单。 */
+    @Test
+    void executesGeneratedWorkspaceProgram() throws Exception {
+        assumeTrue(System.getProperty("os.name", "").toLowerCase().contains("win"));
+        Path whereExecutable = Path.of(System.getenv("SYSTEMROOT"), "System32", "where.exe");
+        assumeTrue(Files.isRegularFile(whereExecutable));
+        Files.copy(whereExecutable, workspace.resolve("verify.exe"));
+
+        JsonNode result = execute("""
+                {"command": ["./verify.exe", "java"]}
+                """);
+
+        assertEquals(0, result.path("exitCode").asInt(), result::toPrettyString);
+        assertFalse(result.path("stdout").asText().isBlank());
     }
 
     /** 验证程序失败以非零退出码返回，而不是转换为工具异常。 */

@@ -4,13 +4,17 @@ import {
   AlertCircle,
   ArrowDown,
   Bot,
+  BrainCircuit,
   CheckCircle2,
+  ChevronDown,
   CornerDownLeft,
+  Eye,
   LoaderCircle,
   Send,
   Square,
   TerminalSquare,
   UserRound,
+  Wrench,
   X,
 } from 'lucide-vue-next'
 import MessageContent from './MessageContent.vue'
@@ -25,6 +29,8 @@ defineProps({
   runStatus: { type: String, default: null },
   currentIteration: { type: Number, default: 0 },
   currentToolName: { type: String, default: '' },
+  activities: { type: Array, default: () => [] },
+  streamedAnswer: { type: String, default: '' },
   cancelling: Boolean,
 })
 
@@ -152,7 +158,41 @@ function runLabel(status, iteration, toolName) {
               <strong>Coding Agent</strong>
               <span>{{ cancelling ? '正在取消' : runLabel(runStatus, currentIteration, currentToolName) }}</span>
             </div>
-            <div class="thinking-line"><span /><span /><span /></div>
+            <div v-if="activities.length" class="agent-process">
+              <template v-for="activity in activities" :key="activity.id">
+                <div
+                  v-if="activity.type === 'perception' || activity.type === 'thought'"
+                  class="process-note"
+                  :class="activity.type"
+                >
+                  <Eye v-if="activity.type === 'perception'" :size="15" />
+                  <BrainCircuit v-else :size="15" />
+                  <span class="process-kind">{{ activity.type === 'perception' ? '感知' : '思考摘要' }}</span>
+                  <span class="process-summary">{{ activity.message }}</span>
+                </div>
+                <details v-else class="process-tool">
+                  <summary>
+                    <Wrench v-if="activity.type === 'action'" :size="15" />
+                    <Eye v-else :size="15" />
+                    <span class="process-kind">{{ activity.type === 'action' ? '行动' : '观察' }}</span>
+                    <code>{{ activity.toolName }}</code>
+                    <span
+                      v-if="activity.type === 'observation'"
+                      class="process-result"
+                      :class="{ failed: !activity.success }"
+                    >
+                      {{ activity.success ? '成功' : '失败' }}
+                    </span>
+                    <ChevronDown :size="14" class="process-chevron" />
+                  </summary>
+                  <pre class="process-detail">{{ activity.detail || '无返回内容' }}</pre>
+                </details>
+              </template>
+            </div>
+            <div v-if="streamedAnswer" class="streamed-answer">
+              <MessageContent :content="streamedAnswer" />
+            </div>
+            <div v-if="!streamedAnswer" class="thinking-line"><span /><span /><span /></div>
           </div>
         </article>
       </div>

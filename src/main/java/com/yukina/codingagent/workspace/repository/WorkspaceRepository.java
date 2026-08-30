@@ -1,6 +1,7 @@
 package com.yukina.codingagent.workspace.repository;
 
 import com.yukina.codingagent.workspace.model.Workspace;
+import com.yukina.codingagent.workspace.model.WorkspaceType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -25,22 +26,28 @@ public class WorkspaceRepository {
     }
 
     /** 插入一个工作空间。 */
-    public Workspace create(String id, String name, String rootPath, Instant now) {
+    public Workspace create(String id, String name, WorkspaceType type, String rootPath, Instant now) {
         jdbcTemplate.update(
-                "INSERT INTO workspaces(id, name, root_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO workspaces(id, name, type, root_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 id,
                 name,
+                type.name(),
                 rootPath,
                 Timestamp.from(now),
                 Timestamp.from(now)
         );
-        return new Workspace(id, name, rootPath, now, now);
+        return new Workspace(id, name, type, rootPath, now, now);
+    }
+
+    /** 创建托管工作空间，兼容未显式传入类型的调用方。 */
+    public Workspace create(String id, String name, String rootPath, Instant now) {
+        return create(id, name, WorkspaceType.MANAGED, rootPath, now);
     }
 
     /** 按 ID 查询工作空间。 */
     public Optional<Workspace> findById(String id) {
         return jdbcTemplate.query(
-                "SELECT id, name, root_path, created_at, updated_at FROM workspaces WHERE id = ?",
+                "SELECT id, name, type, root_path, created_at, updated_at FROM workspaces WHERE id = ?",
                 this::mapWorkspace,
                 id
         ).stream().findFirst();
@@ -49,7 +56,7 @@ public class WorkspaceRepository {
     /** 按规范化根目录查询工作空间。 */
     public Optional<Workspace> findByRootPath(String rootPath) {
         return jdbcTemplate.query(
-                "SELECT id, name, root_path, created_at, updated_at FROM workspaces WHERE root_path = ?",
+                "SELECT id, name, type, root_path, created_at, updated_at FROM workspaces WHERE root_path = ?",
                 this::mapWorkspace,
                 rootPath
         ).stream().findFirst();
@@ -58,7 +65,7 @@ public class WorkspaceRepository {
     /** 按名称和 ID 稳定排序列出全部工作空间。 */
     public List<Workspace> list() {
         return jdbcTemplate.query(
-                "SELECT id, name, root_path, created_at, updated_at FROM workspaces ORDER BY name, id",
+                "SELECT id, name, type, root_path, created_at, updated_at FROM workspaces ORDER BY name, id",
                 this::mapWorkspace
         );
     }
@@ -109,6 +116,7 @@ public class WorkspaceRepository {
         return new Workspace(
                 resultSet.getString("id"),
                 resultSet.getString("name"),
+                WorkspaceType.valueOf(resultSet.getString("type")),
                 resultSet.getString("root_path"),
                 resultSet.getTimestamp("created_at").toInstant(),
                 resultSet.getTimestamp("updated_at").toInstant()

@@ -8,12 +8,14 @@ import com.yukina.codingagent.tool.workspace.ToolArguments;
 import com.yukina.codingagent.tool.workspace.ToolJson;
 import com.yukina.codingagent.tool.workspace.WorkspacePathResolver;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -65,7 +67,9 @@ public class ExecuteCommandTool implements AgentTool {
     private static final DeepSeekToolDefinition DEFINITION = DeepSeekToolDefinition.function(
             "execute_command",
             "Execute an allowlisted build, test, or inspection command inside the workspace. "
-                    + "Pass the executable and each argument as a separate array item; shell operators are not supported.",
+                    + "Pass the executable and each argument as a separate array item; shell operators are not supported. "
+                    + "The command field must be a JSON array, never a JSON-encoded string. "
+                    + "Compile and run in separate calls, using ./program.exe for a generated workspace executable on Windows.",
             Map.of(
                     "type", "object",
                     "properties", Map.of(
@@ -84,6 +88,14 @@ public class ExecuteCommandTool implements AgentTool {
                                     "type", "integer",
                                     "description", "Maximum execution time in seconds",
                                     "minimum", 1
+                            ),
+                            "stdin", Map.of(
+                                    "type", "string",
+                                    "description", "Optional UTF-8 standard input text; do not use shell redirection"
+                            ),
+                            "stdin_file", Map.of(
+                                    "type", "string",
+                                    "description", "Optional workspace-relative file to send to standard input"
                             )
                     ),
                     "required", List.of("command"),
@@ -117,12 +129,9 @@ public class ExecuteCommandTool implements AgentTool {
      */
     @Override
     public String execute(JsonNode arguments) {
-        List<String> command = ToolArguments.requiredTextList(
-                arguments,
-                "command",
-                properties.maxArguments()
-        );
+        List<String> command = readCommand(arguments);
         validateCommand(command);
+        byte[] standardInput = readStandardInput(arguments);
 
         Path workingDirectory = pathResolver.resolveExisting(
                 ToolArguments.optionalText(arguments, "working_directory", ".")
@@ -160,14 +169,17 @@ public class ExecuteCommandTool implements AgentTool {
                 Future<CapturedOutput> stderr = executor.submit(
                         () -> capture(runningProcess.getErrorStream(), properties.maxOutputChars())
                 );
+                Future<?> stdin = executor.submit(() -> provideStandardInput(runningProcess, standardInput));
 
                 boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
                 if (!finished) {
                     terminate(process);
                 }
+                awaitInput(stdin);
                 return serializeResult(
                         command,
                         workingDirectory,
+                        standardInput.length,
                         finished ? process.exitValue() : null,
                         !finished,
                         await(stdout),
@@ -190,20 +202,93 @@ public class ExecuteCommandTool implements AgentTool {
     }
 
     /**
+     * 读取命令数组，并兼容模型偶尔生成的单层 JSON 字符串包装。
+     * 普通 Shell 命令字符串不会被拆词或执行。
+     */
+    private List<String> readCommand(JsonNode arguments) {
+        JsonNode command = arguments == null ? null : arguments.get("command");
+        if (command != null && command.isTextual()) {
+            String encoded = command.asText().trim();
+            try {
+                JsonNode decoded = objectMapper.readTree(encoded);
+                if (decoded != null && decoded.isArray()) {
+                    command = decoded;
+                }
+            } catch (JacksonException ignored) {
+                // 保留原节点，由统一参数校验返回稳定错误。
+            }
+        }
+        return ToolArguments.requiredTextListValue(command, "command", properties.maxArguments());
+    }
+
+    /** 读取互斥的内联输入或工作空间输入文件，并执行字节上限校验。 */
+    private byte[] readStandardInput(JsonNode arguments) {
+        JsonNode inline = arguments == null ? null : arguments.get("stdin");
+        JsonNode file = arguments == null ? null : arguments.get("stdin_file");
+        boolean hasInline = inline != null && !inline.isNull();
+        boolean hasFile = file != null && !file.isNull();
+        if (hasInline && hasFile) {
+            throw new ToolExecutionException("INVALID_ARGUMENTS", "stdin and stdin_file are mutually exclusive");
+        }
+        if (hasInline) {
+            if (!inline.isTextual()) {
+                throw new ToolExecutionException("INVALID_ARGUMENTS", "stdin must be a string");
+            }
+            return validateInputSize(inline.asText().getBytes(StandardCharsets.UTF_8));
+        }
+        if (!hasFile) {
+            return new byte[0];
+        }
+        if (!file.isTextual() || file.asText().isBlank()) {
+            throw new ToolExecutionException("INVALID_ARGUMENTS", "stdin_file must be a non-blank string");
+        }
+        Path inputFile = pathResolver.resolveExisting(file.asText());
+        if (Files.isSymbolicLink(inputFile)
+                || !Files.isRegularFile(inputFile, LinkOption.NOFOLLOW_LINKS)) {
+            throw new ToolExecutionException("NOT_A_FILE", "stdin_file must be a regular workspace file");
+        }
+        try {
+            if (Files.size(inputFile) > properties.maxInputBytes()) {
+                throw inputTooLarge();
+            }
+            return validateInputSize(Files.readAllBytes(inputFile));
+        } catch (IOException exception) {
+            throw new ToolExecutionException("INPUT_READ_FAILED", "Unable to read stdin_file");
+        }
+    }
+
+    /** 校验标准输入大小并返回原字节。 */
+    private byte[] validateInputSize(byte[] input) {
+        if (input.length > properties.maxInputBytes()) {
+            throw inputTooLarge();
+        }
+        return input;
+    }
+
+    /** 创建统一的标准输入超限错误。 */
+    private ToolExecutionException inputTooLarge() {
+        return new ToolExecutionException(
+                "INPUT_TOO_LARGE",
+                "Standard input exceeds the limit of " + properties.maxInputBytes() + " bytes"
+        );
+    }
+
+    /**
      * 限制程序来源、Shell 元字符和具有写入能力的 Git 子命令。
      */
     private void validateCommand(List<String> command) {
         String rawExecutable = command.getFirst();
         String normalizedPath = rawExecutable.replace('\\', '/');
+        boolean workspaceExecutable = isWorkspaceNativeExecutable(normalizedPath);
         if (normalizedPath.contains("/")
-                && !(normalizedPath.startsWith("./") && normalizedPath.indexOf('/', 2) < 0)) {
+                && !workspaceExecutable) {
             throw new ToolExecutionException(
                     "COMMAND_NOT_ALLOWED",
                     "Executable must be an allowlisted name or a workspace-root wrapper"
             );
         }
         String executable = CommandProperties.normalizeExecutable(rawExecutable);
-        if (!properties.isAllowed(executable)) {
+        if (!workspaceExecutable && !properties.isAllowed(executable)) {
             throw new ToolExecutionException("COMMAND_NOT_ALLOWED", "Executable is not allowed: " + executable);
         }
         for (String argument : command) {
@@ -265,25 +350,47 @@ public class ExecuteCommandTool implements AgentTool {
         }
 
         List<String> extensions = executableExtensions(rawExecutable);
+        for (Path directory : properties.searchPaths()) {
+            Path resolved = findExecutable(directory, rawExecutable, extensions);
+            if (resolved != null) {
+                return resolved;
+            }
+        }
         String pathValue = System.getenv("PATH");
         if (pathValue != null) {
             for (String directory : pathValue.split(java.io.File.pathSeparator)) {
                 if (directory.isBlank()) {
                     continue;
                 }
-                for (String extension : extensions) {
-                    try {
-                        Path candidate = Path.of(directory, rawExecutable + extension);
-                        if (Files.isRegularFile(candidate)) {
-                            return candidate.toAbsolutePath().normalize();
-                        }
-                    } catch (InvalidPathException ignored) {
-                        // Ignore malformed PATH entries and continue searching.
+                try {
+                    Path resolved = findExecutable(Path.of(directory), rawExecutable, extensions);
+                    if (resolved != null) {
+                        return resolved;
                     }
+                } catch (InvalidPathException ignored) {
+                    // Ignore malformed inherited PATH entries and continue searching.
                 }
             }
         }
-        throw new ToolExecutionException("COMMAND_NOT_FOUND", "Executable was not found on PATH: " + rawExecutable);
+        throw new ToolExecutionException(
+                "COMMAND_NOT_FOUND",
+                "Executable was not found in configured search paths or PATH: " + rawExecutable
+        );
+    }
+
+    /** 在一个受信任目录中按平台扩展名顺序查找程序。 */
+    private static Path findExecutable(Path directory, String executable, List<String> extensions) {
+        for (String extension : extensions) {
+            try {
+                Path candidate = directory.resolve(executable + extension);
+                if (Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)) {
+                    return candidate.toAbsolutePath().normalize();
+                }
+            } catch (InvalidPathException ignored) {
+                // Ignore malformed configured or inherited PATH entries.
+            }
+        }
+        return null;
     }
 
     /** 返回当前平台查找程序时使用的扩展名顺序。 */
@@ -304,7 +411,7 @@ public class ExecuteCommandTool implements AgentTool {
     /**
      * 仅向子进程复制运行构建工具所需的非敏感环境变量。
      */
-    private static void sanitizeEnvironment(Map<String, String> environment) {
+    private void sanitizeEnvironment(Map<String, String> environment) {
         Map<String, String> inherited = new HashMap<>(environment);
         environment.clear();
         inherited.forEach((name, value) -> {
@@ -312,6 +419,23 @@ public class ExecuteCommandTool implements AgentTool {
                 environment.put(name, value);
             }
         });
+        if (!properties.searchPaths().isEmpty()) {
+            String pathKey = environment.keySet().stream()
+                    .filter(name -> "PATH".equalsIgnoreCase(name))
+                    .findFirst()
+                    .orElse("PATH");
+            String configuredPaths = String.join(
+                    java.io.File.pathSeparator,
+                    properties.searchPaths().stream().map(Path::toString).toList()
+            );
+            String inheritedPath = environment.get(pathKey);
+            environment.put(
+                    pathKey,
+                    inheritedPath == null || inheritedPath.isBlank()
+                            ? configuredPaths
+                            : configuredPaths + java.io.File.pathSeparator + inheritedPath
+            );
+        }
         environment.put("NO_COLOR", "1");
     }
 
@@ -335,6 +459,25 @@ public class ExecuteCommandTool implements AgentTool {
             }
         }
         return new CapturedOutput(content.toString(), truncated);
+    }
+
+    /** 写入标准输入并始终关闭管道，使子进程能够收到 EOF。 */
+    private static void provideStandardInput(Process process, byte[] input) {
+        try (OutputStream output = process.getOutputStream()) {
+            output.write(input);
+            output.flush();
+        } catch (IOException ignored) {
+            // 子进程可能在读取全部输入前正常退出，此时关闭的管道无需升级为工具失败。
+        }
+    }
+
+    /** 等待标准输入写入任务结束。 */
+    private static void awaitInput(Future<?> input) throws InterruptedException {
+        try {
+            input.get();
+        } catch (ExecutionException exception) {
+            throw new ToolExecutionException("COMMAND_INPUT_FAILED", "Failed to provide command input");
+        }
     }
 
     /** 等待输出读取任务，并统一转换异步读取错误。 */
@@ -373,6 +516,7 @@ public class ExecuteCommandTool implements AgentTool {
     private String serializeResult(
             List<String> command,
             Path workingDirectory,
+            int stdinBytes,
             Integer exitCode,
             boolean timedOut,
             CapturedOutput stdout,
@@ -382,6 +526,7 @@ public class ExecuteCommandTool implements AgentTool {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("command", command);
         result.put("workingDirectory", pathResolver.display(workingDirectory));
+        result.put("stdinBytes", stdinBytes);
         result.put("exitCode", exitCode);
         result.put("timedOut", timedOut);
         result.put("stdout", stdout.content());
@@ -395,6 +540,18 @@ public class ExecuteCommandTool implements AgentTool {
     /** 判断当前 JVM 是否运行在 Windows。 */
     private static boolean isWindows() {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    /** 仅允许直接运行工作空间根目录中的原生程序，不允许批处理脚本绕过 Shell 限制。 */
+    private static boolean isWorkspaceNativeExecutable(String normalizedPath) {
+        if (!normalizedPath.startsWith("./") || normalizedPath.indexOf('/', 2) >= 0) {
+            return false;
+        }
+        if (!isWindows()) {
+            return true;
+        }
+        String lowerCase = normalizedPath.toLowerCase(Locale.ROOT);
+        return lowerCase.endsWith(".exe") || lowerCase.endsWith(".com");
     }
 
     /** 检查会被 cmd.exe 解释的高风险字符。 */

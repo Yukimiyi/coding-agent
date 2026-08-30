@@ -2,6 +2,7 @@ package com.yukina.codingagent.tool.command;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
@@ -14,7 +15,9 @@ import java.util.Locale;
  * @param terminationGrace 进程正常终止失败后的宽限时间
  * @param maxOutputChars stdout 和 stderr 各自保留的最大字符数
  * @param maxArguments 单次命令允许的最大参数数量
+ * @param maxInputBytes 单次命令标准输入允许的最大字节数
  * @param allowedExecutables 允许执行的程序名称
+ * @param searchPaths 除系统 PATH 外由服务端信任的程序查找目录
  */
 @ConfigurationProperties(prefix = "agent.command")
 public record CommandProperties(
@@ -23,9 +26,10 @@ public record CommandProperties(
         Duration terminationGrace,
         int maxOutputChars,
         int maxArguments,
-        List<String> allowedExecutables
+        int maxInputBytes,
+        List<String> allowedExecutables,
+        List<Path> searchPaths
 ) {
-
     /** 校验命令边界并规范化可执行程序白名单。 */
     public CommandProperties {
         if (defaultTimeout == null || defaultTimeout.isZero() || defaultTimeout.isNegative()) {
@@ -37,7 +41,7 @@ public record CommandProperties(
         if (terminationGrace == null || terminationGrace.isZero() || terminationGrace.isNegative()) {
             throw new IllegalArgumentException("agent.command.termination-grace must be positive");
         }
-        if (maxOutputChars <= 0 || maxArguments <= 0) {
+        if (maxOutputChars <= 0 || maxArguments <= 0 || maxInputBytes <= 0) {
             throw new IllegalArgumentException("agent command limits must be positive");
         }
         if (allowedExecutables == null || allowedExecutables.isEmpty()) {
@@ -47,6 +51,12 @@ public record CommandProperties(
                 .map(CommandProperties::normalizeExecutable)
                 .distinct()
                 .toList();
+        searchPaths = searchPaths == null
+                ? List.of()
+                : searchPaths.stream()
+                        .map(path -> path.toAbsolutePath().normalize())
+                        .distinct()
+                        .toList();
     }
 
     /** 判断规范化后的程序名称是否位于白名单中。 */

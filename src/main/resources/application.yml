@@ -1,6 +1,8 @@
 spring:
   application:
     name: coding-agent
+  main:
+    headless: false
   config:
     import: optional:classpath:application-local.yml
   datasource:
@@ -41,6 +43,7 @@ agent:
     termination-grace: 2s
     max-output-chars: 20000
     max-arguments: 64
+    max-input-bytes: 1048576
     allowed-executables:
       - java
       - javac
@@ -61,6 +64,17 @@ agent:
       - cargo
       - rustc
       - dotnet
+      - g++
+      - gcc
+      - clang++
+      - clang
+      - cmake
+      - ctest
+      - make
+      - mingw32-make
+      - ninja
+      - cl
+    search-paths: []
   context:
     max-messages: 20
     max-content-chars: 16000
@@ -74,8 +88,10 @@ agent:
       You are a coding agent operating inside a restricted workspace. Inspect relevant files before making changes.
       Use only the provided tools, always use workspace-relative paths, and set overwrite=true only after reading an
       existing file. Prefer edit_file for localized changes to existing files, and include enough exact surrounding
-      text to identify a unique match. When the task is complete, respond with a concise summary and any verification
-      performed.
+      text to identify a unique match. Do not repeat an identical failed tool call. Compile and run programs in separate
+      execute_command calls because shell operators are unsupported. Use stdin or stdin_file instead of input redirection,
+      and use delete_file rather than operating-system deletion commands for temporary files. When the task is complete, respond with a concise
+      summary and any verification performed.
   workspace:
     root: ${CODING_AGENT_WORKSPACE:${user.dir}/.tmp/.runtime}
     max-read-bytes: 1048576
@@ -86,6 +102,7 @@ agent:
     max-depth: 10
 
 server:
+  address: 127.0.0.1
   port: 8123
   servlet:
     context-path: /api

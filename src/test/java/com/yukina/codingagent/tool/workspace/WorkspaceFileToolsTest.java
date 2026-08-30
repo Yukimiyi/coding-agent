@@ -2,6 +2,7 @@ package com.yukina.codingagent.tool.workspace;
 
 import com.yukina.codingagent.tool.ToolExecutionException;
 import com.yukina.codingagent.tool.builtin.ListFilesTool;
+import com.yukina.codingagent.tool.builtin.DeleteFileTool;
 import com.yukina.codingagent.tool.builtin.ReadFileTool;
 import com.yukina.codingagent.tool.builtin.SearchTextTool;
 import com.yukina.codingagent.tool.builtin.WriteFileTool;
@@ -89,6 +90,42 @@ class WorkspaceFileToolsTest {
         assertEquals("FILE_ALREADY_EXISTS", exception.code());
         assertTrue(result.path("overwritten").asBoolean());
         assertEquals("second", Files.readString(workspace.resolve("notes.txt")));
+    }
+
+    /** 验证受控删除工具只删除指定普通文件。 */
+    @Test
+    void deletesRegularFile() throws Exception {
+        Path temporaryFile = workspace.resolve("verify.exe");
+        Files.writeString(temporaryFile, "temporary");
+        DeleteFileTool deleteFile = new DeleteFileTool(pathResolver, objectMapper);
+
+        JsonNode result = objectMapper.readTree(deleteFile.execute(objectMapper.readTree("""
+                {"path":"verify.exe"}
+                """)));
+
+        assertTrue(result.path("deleted").asBoolean());
+        assertEquals("verify.exe", result.path("path").asText());
+        assertFalse(Files.exists(temporaryFile));
+    }
+
+    /** 验证删除工具拒绝目录和工作空间外路径。 */
+    @Test
+    void rejectsDirectoryAndTraversalDeletion() throws Exception {
+        Files.createDirectory(workspace.resolve("build"));
+        DeleteFileTool deleteFile = new DeleteFileTool(pathResolver, objectMapper);
+
+        ToolExecutionException directoryError = assertThrows(
+                ToolExecutionException.class,
+                () -> deleteFile.execute(objectMapper.readTree("{\"path\":\"build\"}"))
+        );
+        ToolExecutionException traversalError = assertThrows(
+                ToolExecutionException.class,
+                () -> deleteFile.execute(objectMapper.readTree("{\"path\":\"../outside.txt\"}"))
+        );
+
+        assertEquals("NOT_A_FILE", directoryError.code());
+        assertEquals("PATH_OUTSIDE_WORKSPACE", traversalError.code());
+        assertTrue(Files.isDirectory(workspace.resolve("build")));
     }
 
     /** 验证绝对路径和父目录穿越会被拒绝。 */

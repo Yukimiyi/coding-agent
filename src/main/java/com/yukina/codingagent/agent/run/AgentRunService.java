@@ -186,6 +186,19 @@ public class AgentRunService {
                 state.startedAt = Instant.now();
             }
             publish(state, AgentRunEventType.RUNNING, null, null, null, null, null, null, null, null, null);
+            publish(
+                    state,
+                    AgentRunEventType.PERCEPTION,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    "已接收任务，正在加载会话与工作空间上下文",
+                    null
+            );
 
             ConversationChatResult chatResult = conversationAgentService.execute(
                     state.prepared,
@@ -214,6 +227,66 @@ public class AgentRunService {
                 publish(
                         state,
                         AgentRunEventType.ITERATION_STARTED,
+                        iteration,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null
+                );
+            }
+
+            @Override
+            public void onThought(int iteration, String summary) {
+                publish(
+                        state,
+                        AgentRunEventType.THOUGHT,
+                        iteration,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        summary,
+                        null
+                );
+            }
+
+            @Override
+            public void onAnswerDelta(int iteration, String delta) {
+                if (delta == null || delta.isEmpty()) {
+                    return;
+                }
+                synchronized (state.monitor) {
+                    state.liveContent.append(delta);
+                }
+                publish(
+                        state,
+                        AgentRunEventType.ANSWER_DELTA,
+                        iteration,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        delta,
+                        null
+                );
+            }
+
+            @Override
+            public void onAnswerReset(int iteration) {
+                synchronized (state.monitor) {
+                    state.liveContent.setLength(0);
+                }
+                publish(
+                        state,
+                        AgentRunEventType.ANSWER_RESET,
                         iteration,
                         null,
                         null,
@@ -295,6 +368,9 @@ public class AgentRunService {
             }
             state.status = AgentRunStatus.COMPLETED;
             state.result = result;
+            if (state.liveContent.isEmpty() && result.answer() != null) {
+                state.liveContent.append(result.answer());
+            }
             state.finishedAt = Instant.now();
         }
         publish(state, AgentRunEventType.COMPLETED, state.currentIteration, null, null, null, null, null, null, null, result);
@@ -417,7 +493,7 @@ public class AgentRunService {
         return new AgentRunAccepted(
                 state.runId,
                 state.prepared.conversationId(),
-                state.prepared.workspace().id(),
+                state.prepared.workspaceId(),
                 state.prepared.created(),
                 state.status,
                 base,
@@ -470,6 +546,7 @@ public class AgentRunService {
         private final AtomicBoolean cancelRequested = new AtomicBoolean();
         private final List<AgentRunEvent> events = new ArrayList<>();
         private final List<AgentRunResult.ToolStep> toolSteps = new ArrayList<>();
+        private final StringBuilder liveContent = new StringBuilder();
         private final Set<SseEmitter> emitters = new LinkedHashSet<>();
         private volatile AgentRunStatus status = AgentRunStatus.QUEUED;
         private volatile Instant startedAt;
@@ -517,7 +594,7 @@ public class AgentRunService {
                         runId,
                         requestId,
                         prepared.conversationId(),
-                        prepared.workspace().id(),
+                        prepared.workspaceId(),
                         prepared.created(),
                         status,
                         createdAt,
@@ -525,6 +602,7 @@ public class AgentRunService {
                         finishedAt,
                         currentIteration,
                         toolSteps,
+                        liveContent.toString(),
                         result,
                         error,
                         sequence

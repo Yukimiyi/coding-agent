@@ -75,9 +75,36 @@ export const agentApi = {
     return request(`/workspaces/${workspaceId}`, { method: 'DELETE' })
   },
 
-  listConversations(workspaceId = null, limit = 100) {
+  async downloadWorkspace(workspaceId, workspaceName) {
+    const response = await fetch(`${API_BASE}/workspaces/${workspaceId}/archive`)
+    if (!response.ok) {
+      const rawBody = await response.text()
+      let message = rawBody || `下载失败（${response.status}）`
+      try {
+        const body = JSON.parse(rawBody)
+        message = body?.detail || body?.message || message
+      } catch {
+        // 非 JSON 错误正文直接展示。
+      }
+      throw new Error(message)
+    }
+    const blob = await response.blob()
+    const safeName = (workspaceName || 'project').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${safeName || 'project'}.zip`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  },
+
+  listConversations(workspaceId = undefined, limit = 100) {
     const params = new URLSearchParams({ limit: String(limit) })
-    if (workspaceId) {
+    if (workspaceId === null) {
+      params.set('withoutWorkspace', 'true')
+    } else if (workspaceId) {
       params.set('workspaceId', workspaceId)
     }
     return request(`/conversations?${params}`)

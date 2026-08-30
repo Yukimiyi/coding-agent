@@ -20,6 +20,7 @@ public record AgentRunSnapshot(
         Instant finishedAt,
         int currentIteration,
         List<AgentRunResult.ToolStep> toolSteps,
+        String liveContent,
         AgentRunResult result,
         String error,
         long lastSequence

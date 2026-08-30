@@ -10,13 +10,20 @@ import com.yukina.codingagent.tool.ToolRegistry;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 驱动“模型推理 -> 工具执行 -> 结果回传”的 Agent 主循环。
  */
 @Service
 public class AgentLoop {
+
+    private static final String CHAT_ONLY_SYSTEM_PROMPT =
+            "You are a coding assistant in a conversation without an attached workspace. "
+                    + "Answer from the conversation context. You cannot inspect, modify, or execute local files, "
+                    + "so do not claim that you performed those actions.";
 
     private final DeepSeekClient deepSeekClient;
     private final ToolRegistry toolRegistry;
@@ -79,6 +86,27 @@ public class AgentLoop {
             AgentLoopObserver observer,
             AgentRunCancellation cancellation
     ) {
+        return run(task, conversationHistory, observer, cancellation, true);
+    }
+
+    /** 执行不附带工作空间的纯对话，不向模型提供任何本地工具。 */
+    public AgentRunResult runWithoutTools(
+            String task,
+            List<DeepSeekMessage> conversationHistory,
+            AgentLoopObserver observer,
+            AgentRunCancellation cancellation
+    ) {
+        return run(task, conversationHistory, observer, cancellation, false);
+    }
+
+    /** 根据当前会话是否绑定工作空间执行统一的模型循环。 */
+    private AgentRunResult run(
+            String task,
+            List<DeepSeekMessage> conversationHistory,
+            AgentLoopObserver observer,
+            AgentRunCancellation cancellation,
+            boolean toolsEnabled
+    ) {
         if (task == null || task.isBlank()) {
             throw new IllegalArgumentException("task must not be blank");
         }
@@ -87,19 +115,28 @@ public class AgentLoop {
         AgentRunCancellation safeCancellation = cancellation == null ? AgentRunCancellation.NONE : cancellation;
 
         List<DeepSeekMessage> messages = new ArrayList<>();
-        messages.add(DeepSeekMessage.system(properties.systemPrompt()));
+        messages.add(DeepSeekMessage.system(
+                toolsEnabled ? properties.systemPrompt() : CHAT_ONLY_SYSTEM_PROMPT
+        ));
         messages.addAll(safeHistory);
         messages.add(DeepSeekMessage.user(task));
         List<AgentRunResult.ToolStep> toolSteps = new ArrayList<>();
+        Set<ToolFailureSignature> failedToolCalls = new HashSet<>();
         UsageAccumulator usage = new UsageAccumulator();
         String model = null;
 
         for (int iteration = 1; iteration <= properties.maxIterations(); iteration++) {
             safeCancellation.throwIfCancellationRequested();
             safeObserver.onIterationStarted(iteration);
+            safeObserver.onThought(iteration, publicThoughtSummary(iteration, toolsEnabled, toolSteps));
             DeepSeekChatResponse response;
             try {
-                response = deepSeekClient.chat(List.copyOf(messages), toolRegistry.definitions());
+                int currentIteration = iteration;
+                response = deepSeekClient.chatStream(
+                        List.copyOf(messages),
+                        toolsEnabled ? toolRegistry.definitions() : List.of(),
+                        delta -> safeObserver.onAnswerDelta(currentIteration, delta)
+                );
             } catch (RuntimeException exception) {
                 safeCancellation.throwIfCancellationRequested();
                 throw exception;
@@ -113,7 +150,21 @@ public class AgentLoop {
             List<DeepSeekToolCall> toolCalls = assistant.toolCalls() == null
                     ? List.of()
                     : assistant.toolCalls();
+            if (!toolCalls.isEmpty() && assistant.content() != null && !assistant.content().isBlank()) {
+                safeObserver.onAnswerReset(iteration);
+            }
             safeObserver.onModelResponse(iteration, model, toolCalls.size());
+            if (!toolsEnabled && !toolCalls.isEmpty()) {
+                return result(
+                        assistant.content(),
+                        model,
+                        iteration,
+                        false,
+                        AgentRunResult.StopReason.INVALID_TOOL_CALL,
+                        toolSteps,
+                        usage
+                );
+            }
             if (toolCalls.isEmpty()) {
                 String answer = assistant.content();
                 boolean completed = answer != null && !answer.isBlank();
@@ -163,6 +214,24 @@ public class AgentLoop {
                 AgentRunResult.ToolStep toolStep = toToolStep(iteration, toolCall, executionResult);
                 toolSteps.add(toolStep);
                 safeObserver.onToolCompleted(toolStep);
+                if (!toolStep.success()) {
+                    ToolFailureSignature signature = new ToolFailureSignature(
+                            toolStep.toolName(),
+                            toolStep.arguments(),
+                            toolStep.error() == null ? null : toolStep.error().code()
+                    );
+                    if (!failedToolCalls.add(signature)) {
+                        return result(
+                                assistant.content(),
+                                model,
+                                iteration,
+                                false,
+                                AgentRunResult.StopReason.REPEATED_TOOL_FAILURE,
+                                toolSteps,
+                                usage
+                        );
+                    }
+                }
             }
         }
 
@@ -255,6 +324,31 @@ public class AgentLoop {
 
     /** 保存文本及其是否被截断。 */
     private record TruncatedText(String value, boolean truncated) {
+    }
+
+    /**
+     * 根据公开运行状态生成可展示的进度摘要，不读取或转发模型隐藏思维链。
+     */
+    private static String publicThoughtSummary(
+            int iteration,
+            boolean toolsEnabled,
+            List<AgentRunResult.ToolStep> toolSteps
+    ) {
+        if (iteration == 1) {
+            return toolsEnabled ? "分析任务并规划下一步" : "分析问题并组织回答";
+        }
+        if (toolSteps.isEmpty()) {
+            return "结合已有上下文调整下一步";
+        }
+        AgentRunResult.ToolStep previousStep = toolSteps.getLast();
+        if (previousStep.success()) {
+            return "已获得 " + previousStep.toolName() + " 的结果，正在判断下一步";
+        }
+        return previousStep.toolName() + " 执行失败，正在调整方案";
+    }
+
+    /** 标识完全相同的确定性工具失败，防止模型无限重复调用。 */
+    private record ToolFailureSignature(String toolName, String arguments, String errorCode) {
     }
 
     /** 跨模型调用累计 Token 用量。 */

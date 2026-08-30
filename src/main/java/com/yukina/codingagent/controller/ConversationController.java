@@ -43,16 +43,27 @@ public class ConversationController {
     @ResponseStatus(HttpStatus.CREATED)
     public Conversation create(@RequestBody(required = false) CreateConversationRequest request) {
         String workspaceId = request == null ? null : request.workspaceId();
-        Workspace workspace = workspaceService.get(workspaceId);
-        return conversationService.create(request.title(), workspace.id());
+        String title = request == null ? null : request.title();
+        if (workspaceId != null && !workspaceId.isBlank()) {
+            Workspace workspace = workspaceService.get(workspaceId);
+            workspaceId = workspace.id();
+        }
+        return conversationService.create(title, workspaceId);
     }
 
     /** 按最近更新时间倒序列出会话。 */
     @GetMapping
     public List<Conversation> list(
             @RequestParam(defaultValue = "20") int limit,
-            @RequestParam(required = false) String workspaceId
+            @RequestParam(required = false) String workspaceId,
+            @RequestParam(defaultValue = "false") boolean withoutWorkspace
     ) {
+        if (withoutWorkspace) {
+            if (workspaceId != null && !workspaceId.isBlank()) {
+                throw new IllegalArgumentException("workspaceId and withoutWorkspace cannot be combined");
+            }
+            return conversationService.listWithoutWorkspace(limit);
+        }
         if (workspaceId == null || workspaceId.isBlank()) {
             return conversationService.list(limit);
         }
