@@ -145,11 +145,23 @@ public class AgentLoop {
             model = response.model();
             usage.add(response.usage());
             DeepSeekMessage assistant = response.firstMessage();
+            String finishReason = response.firstFinishReason();
             messages.add(assistant);
 
             List<DeepSeekToolCall> toolCalls = assistant.toolCalls() == null
                     ? List.of()
                     : assistant.toolCalls();
+            if ("length".equals(finishReason)) {
+                return result(
+                        assistant.content(),
+                        model,
+                        iteration,
+                        false,
+                        AgentRunResult.StopReason.RESPONSE_TRUNCATED,
+                        toolSteps,
+                        usage
+                );
+            }
             if (!toolCalls.isEmpty() && assistant.content() != null && !assistant.content().isBlank()) {
                 safeObserver.onAnswerReset(iteration);
             }
@@ -168,6 +180,17 @@ public class AgentLoop {
             if (toolCalls.isEmpty()) {
                 String answer = assistant.content();
                 boolean completed = answer != null && !answer.isBlank();
+                if (completed && finishReason != null && !"stop".equals(finishReason)) {
+                    return result(
+                            answer,
+                            model,
+                            iteration,
+                            false,
+                            AgentRunResult.StopReason.MODEL_STOPPED,
+                            toolSteps,
+                            usage
+                    );
+                }
                 return result(
                         answer,
                         model,

@@ -308,6 +308,32 @@ class ExecuteCommandToolTest {
         assertEquals("COMMAND_NOT_ALLOWED", exception.code());
     }
 
+    /** 验证解释器不能通过参数直接执行内联代码。 */
+    @Test
+    void rejectsInlineInterpreterCode() throws Exception {
+        ToolExecutionException exception = assertThrows(
+                ToolExecutionException.class,
+                () -> commandTool.execute(objectMapper.readTree("""
+                        {"command": ["python", "-c", "print('unsafe')"]}
+                        """))
+        );
+
+        assertEquals("COMMAND_NOT_ALLOWED", exception.code());
+    }
+
+    /** 验证命令参数不能直接引用工作区外绝对路径。 */
+    @Test
+    void rejectsAbsolutePathArgument() throws Exception {
+        ToolExecutionException exception = assertThrows(
+                ToolExecutionException.class,
+                () -> commandTool.execute(objectMapper.readTree("""
+                        {"command": ["java", "C:\\\\outside\\\\Main.java"]}
+                        """))
+        );
+
+        assertEquals("PATH_OUTSIDE_WORKSPACE", exception.code());
+    }
+
     /** 验证 Git 仅开放检查类子命令。 */
     @Test
     void rejectsMutatingGitSubcommand() throws Exception {

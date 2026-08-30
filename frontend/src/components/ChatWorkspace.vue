@@ -32,6 +32,7 @@ defineProps({
   activities: { type: Array, default: () => [] },
   streamedAnswer: { type: String, default: '' },
   cancelling: Boolean,
+  workspaceActive: Boolean,
 })
 
 const emit = defineEmits(['send', 'cancel', 'load-older', 'dismiss-error'])
@@ -223,7 +224,7 @@ function runLabel(status, iteration, toolName) {
         </button>
       </div>
       <span class="composer-status">
-        <CheckCircle2 :size="13" /> 工作区内受控执行
+        <CheckCircle2 :size="13" /> {{ workspaceActive ? '本地工作区' : '纯对话模式' }}
       </span>
     </footer>
   </main>

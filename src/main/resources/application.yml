@@ -4,7 +4,7 @@ spring:
   main:
     headless: false
   config:
-    import: optional:classpath:application-local.yml
+    import: optional:file:./application-local.yml,optional:file:./src/main/resources/application-local.yml
   datasource:
     url: ${CODING_AGENT_DB_URL:jdbc:h2:file:./data/coding-agent;DB_CLOSE_ON_EXIT=FALSE}
     username: ${CODING_AGENT_DB_USERNAME:sa}
@@ -13,6 +13,13 @@ spring:
   sql:
     init:
       mode: always
+      schema-locations: classpath:schema.sql
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: false
   servlet:
     multipart:
       max-file-size: 2MB
@@ -24,6 +31,8 @@ deepseek:
   model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
   request-timeout: ${DEEPSEEK_REQUEST_TIMEOUT:120s}
   thinking-enabled: ${DEEPSEEK_THINKING_ENABLED:false}
+  max-retries: ${DEEPSEEK_MAX_RETRIES:2}
+  retry-delay: ${DEEPSEEK_RETRY_DELAY:500ms}
 
 agent:
   workspace-registry:
@@ -37,6 +46,8 @@ agent:
     retention: 1h
     max-runs: 200
     sse-timeout: 30m
+    max-events-per-run: 1000
+    max-live-content-chars: 200000
   command:
     default-timeout: 60s
     max-timeout: 300s
@@ -78,6 +89,7 @@ agent:
   context:
     max-messages: 20
     max-content-chars: 16000
+    max-total-content-chars: 48000
     ttl: 30m
     max-cached-conversations: 1000
   loop:

@@ -34,6 +34,8 @@ defineEmits([
   'workspace-change',
   'add-workspace',
   'download-workspace',
+  'rename-workspace',
+  'delete-workspace',
 ])
 
 const query = ref('')
@@ -107,6 +109,24 @@ function formatRelativeTime(value) {
         @click="$emit('download-workspace')"
       >
         <Download :size="15" />
+      </button>
+      <button
+        class="row-action"
+        type="button"
+        title="重命名项目"
+        :disabled="busy || workspaceLoading || !selectedWorkspace"
+        @click="$emit('rename-workspace', selectedWorkspace)"
+      >
+        <Pencil :size="14" />
+      </button>
+      <button
+        class="row-action danger"
+        type="button"
+        title="删除项目"
+        :disabled="busy || workspaceLoading || !selectedWorkspace"
+        @click="$emit('delete-workspace', selectedWorkspace)"
+      >
+        <Trash2 :size="14" />
       </button>
       <button
         class="row-action"

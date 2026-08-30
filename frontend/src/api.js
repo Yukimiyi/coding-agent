@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE || '/api'
+const API_BASE = import.meta.env?.VITE_API_BASE || '/api'
 
 async function request(path, options = {}) {
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
@@ -118,6 +118,10 @@ export const agentApi = {
     return request(`/conversations/${conversationId}/messages?${params}`)
   },
 
+  getLatestRun(conversationId) {
+    return request(`/conversations/${conversationId}/latest-run`)
+  },
+
   startRun(requestId, conversationId, workspaceId, task) {
     return request('/agent/runs', {
       method: 'POST',
@@ -138,8 +142,13 @@ export const agentApi = {
     return request(`/agent/runs/${runId}/cancel`, { method: 'POST' })
   },
 
-  runEventsUrl(runId) {
-    return `${API_BASE}/agent/runs/${runId}/events`
+  runEventsUrl(runId, afterSequence = 0) {
+    const params = new URLSearchParams()
+    if (afterSequence > 0) {
+      params.set('afterSequence', String(afterSequence))
+    }
+    const query = params.size ? `?${params}` : ''
+    return `${API_BASE}/agent/runs/${runId}/events${query}`
   },
 
   renameConversation(conversationId, title) {

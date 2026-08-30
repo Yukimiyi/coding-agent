@@ -38,7 +38,7 @@ class ConversationContextManagerTest {
                 .build();
         repository = new ConversationRepository(new JdbcTemplate(database));
         repository.create("conversation-1", "Test", Instant.now());
-        properties = new ConversationContextProperties(4, 100, Duration.ofMinutes(30), 10);
+        properties = new ConversationContextProperties(4, 100, 300, Duration.ofMinutes(30), 10);
     }
 
     /** 关闭当前用例的嵌入式数据库。 */
@@ -78,6 +78,7 @@ class ConversationContextManagerTest {
         ConversationContextProperties shortTtl = new ConversationContextProperties(
                 4,
                 100,
+                300,
                 Duration.ofSeconds(10),
                 10
         );
@@ -87,6 +88,32 @@ class ConversationContextManagerTest {
         clock.advance(Duration.ofSeconds(11));
 
         assertTrue(store.get("conversation-1").isEmpty());
+    }
+
+    /** 验证历史上下文同时受总字符预算约束且不会从助手消息开始。 */
+    @Test
+    void limitsTotalContextCharactersByCompleteRecentSuffix() {
+        Instant now = Instant.now();
+        repository.appendMessage("conversation-1", ConversationMessage.Role.USER, "oldold", ConversationMessage.Status.SUCCESS, now);
+        repository.appendMessage("conversation-1", ConversationMessage.Role.ASSISTANT, "ok", ConversationMessage.Status.SUCCESS, now);
+        repository.appendMessage("conversation-1", ConversationMessage.Role.USER, "new", ConversationMessage.Status.SUCCESS, now);
+        repository.appendMessage("conversation-1", ConversationMessage.Role.ASSISTANT, "yes", ConversationMessage.Status.SUCCESS, now);
+        ConversationContextProperties bounded = new ConversationContextProperties(
+                10,
+                10,
+                10,
+                Duration.ofMinutes(30),
+                10
+        );
+        ConversationContextManager manager = new ConversationContextManager(
+                repository,
+                new InMemoryConversationMemoryStore(bounded),
+                bounded
+        );
+
+        List<DeepSeekMessage> context = manager.load("conversation-1");
+
+        assertEquals(List.of("new", "yes"), context.stream().map(DeepSeekMessage::content).toList());
     }
 
     /** 支持手动推进时间的测试时钟。 */

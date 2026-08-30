@@ -34,7 +34,8 @@ class AgentRunServiceTest {
         conversationAgentService = mock(ConversationAgentService.class);
         runService = new AgentRunService(
                 conversationAgentService,
-                new AgentRunProperties(Duration.ofMinutes(5), 20, Duration.ofMinutes(1))
+                new AgentRunProperties(Duration.ofMinutes(5), 20, Duration.ofMinutes(1), 100, 10000),
+                mock(AgentRunHistoryRepository.class)
         );
     }
 

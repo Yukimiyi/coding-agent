@@ -37,6 +37,25 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
         FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS agent_runs (
+    run_id VARCHAR(36) PRIMARY KEY,
+    request_id VARCHAR(100) NOT NULL,
+    conversation_id VARCHAR(36) NOT NULL,
+    workspace_id VARCHAR(36),
+    status VARCHAR(16) NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    started_at TIMESTAMP,
+    finished_at TIMESTAMP NOT NULL,
+    tool_steps_json CLOB,
+    result_json CLOB,
+    error_message CLOB,
+    CONSTRAINT fk_agent_run_conversation
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+ALTER TABLE agent_runs
+    ADD COLUMN IF NOT EXISTS tool_steps_json CLOB;
+
 CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
     ON conversations(updated_at DESC);
 
@@ -45,3 +64,6 @@ CREATE INDEX IF NOT EXISTS idx_conversations_workspace_updated_at
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
     ON conversation_messages(conversation_id, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation_finished
+    ON agent_runs(conversation_id, finished_at DESC);

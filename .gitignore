@@ -4,6 +4,10 @@ data/
 .tmp/
 node_modules/
 frontend/dist/
+release/
+agent-response.json
+chat-first.json
+chat-second.json
 *.local
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
@@ -39,4 +43,5 @@ build/
 
 ### Local secrets ###
 .env
+/application-local.yml
 src/main/resources/application-local.yml

@@ -5,6 +5,8 @@ import com.yukina.codingagent.agent.AgentRunCancelledException;
 import com.yukina.codingagent.agent.AgentRunResult;
 import com.yukina.codingagent.conversation.model.ConversationChatResult;
 import com.yukina.codingagent.conversation.service.ConversationAgentService;
+import com.yukina.codingagent.deepseek.DeepSeekApiException;
+import com.yukina.codingagent.deepseek.DeepSeekConfigurationException;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +39,7 @@ public class AgentRunService {
 
     private final ConversationAgentService conversationAgentService;
     private final AgentRunProperties properties;
+    private final AgentRunHistoryRepository runHistoryRepository;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final Object registryMonitor = new Object();
     private final Map<String, RunState> runs = new HashMap<>();
@@ -46,10 +49,12 @@ public class AgentRunService {
     /** 创建异步 Agent 任务服务。 */
     public AgentRunService(
             ConversationAgentService conversationAgentService,
-            AgentRunProperties properties
+            AgentRunProperties properties,
+            AgentRunHistoryRepository runHistoryRepository
     ) {
         this.conversationAgentService = conversationAgentService;
         this.properties = properties;
+        this.runHistoryRepository = runHistoryRepository;
     }
 
     /**
@@ -213,9 +218,27 @@ public class AgentRunService {
                 markCancelled(state);
             } else {
                 LOGGER.error("Agent run {} failed", state.runId, exception);
-                markFailed(state, "Agent execution failed");
+                markFailed(state, userFacingError(exception));
             }
         }
+    }
+
+    /** 将内部异常转换成不泄露响应正文的可操作错误说明。 */
+    private static String userFacingError(RuntimeException exception) {
+        if (exception instanceof DeepSeekConfigurationException) {
+            return "DeepSeek API 密钥尚未配置";
+        }
+        if (exception instanceof DeepSeekApiException apiException) {
+            return switch (apiException.getStatusCode()) {
+                case 401, 403 -> "DeepSeek API 密钥无效或当前账户无权限";
+                case 429 -> "DeepSeek 请求频率受限，请稍后重试";
+                case 500, 502, 503, 504 -> "DeepSeek 服务暂时不可用，请稍后重试";
+                default -> apiException.getStatusCode() > 0
+                        ? "DeepSeek API 请求失败（HTTP " + apiException.getStatusCode() + "）"
+                        : "无法连接 DeepSeek，或模型响应格式异常";
+            };
+        }
+        return "Agent 执行失败";
     }
 
     /** 创建把 AgentLoop 阶段转换为 SSE 事件的观察器。 */
@@ -262,7 +285,10 @@ public class AgentRunService {
                     return;
                 }
                 synchronized (state.monitor) {
-                    state.liveContent.append(delta);
+                    int remaining = properties.maxLiveContentChars() - state.liveContent.length();
+                    if (remaining > 0) {
+                        state.liveContent.append(delta, 0, Math.min(remaining, delta.length()));
+                    }
                 }
                 publish(
                         state,
@@ -373,6 +399,7 @@ public class AgentRunService {
             }
             state.finishedAt = Instant.now();
         }
+        persistHistory(state);
         publish(state, AgentRunEventType.COMPLETED, state.currentIteration, null, null, null, null, null, null, null, result);
         releaseActiveConversation(state);
     }
@@ -387,6 +414,7 @@ public class AgentRunService {
             state.error = error;
             state.finishedAt = Instant.now();
         }
+        persistHistory(state);
         publish(state, AgentRunEventType.FAILED, state.currentIteration, null, null, null, null, null, null, error, null);
         releaseActiveConversation(state);
     }
@@ -401,6 +429,7 @@ public class AgentRunService {
             state.error = "Agent execution cancelled";
             state.finishedAt = Instant.now();
         }
+        persistHistory(state);
         publish(
                 state,
                 AgentRunEventType.CANCELLED,
@@ -415,6 +444,15 @@ public class AgentRunService {
                 null
         );
         releaseActiveConversation(state);
+    }
+
+    /** 尽力保存终态运行；历史写入失败不改变已产生的 Agent 结果。 */
+    private void persistHistory(RunState state) {
+        try {
+            runHistoryRepository.save(state.snapshot());
+        } catch (RuntimeException exception) {
+            LOGGER.warn("Unable to persist Agent run history {}", state.runId, exception);
+        }
     }
 
     /** 创建、保存并推送一条事件。 */
@@ -449,6 +487,9 @@ public class AgentRunService {
                     message
             );
             state.events.add(event);
+            while (state.events.size() > properties.maxEventsPerRun()) {
+                state.events.removeFirst();
+            }
             Iterator<SseEmitter> iterator = state.emitters.iterator();
             while (iterator.hasNext()) {
                 SseEmitter emitter = iterator.next();

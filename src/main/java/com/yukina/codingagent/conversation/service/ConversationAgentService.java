@@ -9,6 +9,7 @@ import com.yukina.codingagent.conversation.memory.ConversationContextManager;
 import com.yukina.codingagent.conversation.model.Conversation;
 import com.yukina.codingagent.conversation.model.ConversationChatResult;
 import com.yukina.codingagent.conversation.model.ConversationMessage;
+import com.yukina.codingagent.conversation.model.ConversationMessage;
 import com.yukina.codingagent.deepseek.DeepSeekMessage;
 import com.yukina.codingagent.tool.workspace.WorkspaceExecutionContext;
 import com.yukina.codingagent.workspace.model.Workspace;
@@ -168,19 +169,21 @@ public class ConversationAgentService {
         String conversationId = prepared.conversationId();
         conversationService.get(conversationId);
         List<DeepSeekMessage> history = contextManager.load(conversationId);
-        contextManager.appendSuccess(conversationId, ConversationMessage.Role.USER, prepared.task());
+        ConversationMessage pendingUser = contextManager.appendPendingUser(conversationId, prepared.task());
 
         try {
             AgentRunResult result = prepared.workspace() == null
                     ? agentLoop.runWithoutTools(prepared.task(), history, observer, cancellation)
                     : agentLoop.run(prepared.task(), history, observer, cancellation);
             if (result.completed() && result.answer() != null && !result.answer().isBlank()) {
+                contextManager.markSuccess(pendingUser);
                 contextManager.appendSuccess(
                         conversationId,
                         ConversationMessage.Role.ASSISTANT,
                         result.answer()
                 );
             } else {
+                contextManager.markError(pendingUser);
                 contextManager.appendError(
                         conversationId,
                         ConversationMessage.Role.ASSISTANT,
@@ -189,6 +192,7 @@ public class ConversationAgentService {
             }
             return new ConversationChatResult(conversationId, prepared.created(), result);
         } catch (AgentRunCancelledException exception) {
+            contextManager.markError(pendingUser);
             contextManager.appendError(
                     conversationId,
                     ConversationMessage.Role.ASSISTANT,
@@ -196,6 +200,7 @@ public class ConversationAgentService {
             );
             throw exception;
         } catch (RuntimeException exception) {
+            contextManager.markError(pendingUser);
             contextManager.appendError(
                     conversationId,
                     ConversationMessage.Role.ASSISTANT,

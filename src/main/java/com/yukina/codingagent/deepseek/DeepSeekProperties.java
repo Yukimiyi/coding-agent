@@ -13,6 +13,8 @@ import java.time.Duration;
  * @param model 默认模型名称
  * @param requestTimeout 单次请求超时
  * @param thinkingEnabled 是否启用思考模式
+ * @param maxRetries 瞬时错误的最大重试次数
+ * @param retryDelay 首次重试等待时间
  */
 @ConfigurationProperties(prefix = "deepseek")
 public record DeepSeekProperties(
@@ -20,7 +22,9 @@ public record DeepSeekProperties(
         String apiKey,
         String model,
         Duration requestTimeout,
-        boolean thinkingEnabled
+        boolean thinkingEnabled,
+        int maxRetries,
+        Duration retryDelay
 ) {
 
     /** 规范化地址并校验必要配置。 */
@@ -30,6 +34,13 @@ public record DeepSeekProperties(
         requestTimeout = requestTimeout == null ? Duration.ofSeconds(120) : requestTimeout;
         if (requestTimeout.isZero() || requestTimeout.isNegative()) {
             throw new IllegalArgumentException("deepseek.request-timeout must be positive");
+        }
+        if (maxRetries < 0 || maxRetries > 5) {
+            throw new IllegalArgumentException("deepseek.max-retries must be between 0 and 5");
+        }
+        retryDelay = retryDelay == null ? Duration.ofMillis(500) : retryDelay;
+        if (retryDelay.isZero() || retryDelay.isNegative()) {
+            throw new IllegalArgumentException("deepseek.retry-delay must be positive");
         }
     }
 

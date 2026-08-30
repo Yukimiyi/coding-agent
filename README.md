@@ -1,6 +1,8 @@
 # Coding Agent
 
-A Spring Boot and Vue coding agent that uses DeepSeek tool calls to inspect, edit, and verify projects inside a restricted workspace.
+A Spring Boot and Vue coding agent that uses DeepSeek tool calls to inspect, edit, and verify projects through workspace-scoped tools.
+
+> Security boundary: file tools reject absolute paths, traversal, and symbolic-link escapes. Commands are allowlisted and run without a shell, but generated child programs still run with the current operating-system user's permissions. Use the application only with trusted local projects; it is not an OS-level sandbox.
 
 `execute_command` accepts either inline `stdin` or a workspace-relative `stdin_file` without invoking a shell. Temporary artifacts are removed through the workspace-scoped `delete_file` tool instead of operating-system deletion commands.
 
@@ -44,4 +46,28 @@ curl.exe -X POST "http://localhost:8123/api/agent/runs/{runId}/cancel"
 
 ## Run Locally
 
-Start the backend with `mvn spring-boot:run`, then start the frontend from `frontend/` with `npm run dev`. Open `http://127.0.0.1:5173/`.
+The packaged application requires Java 21 or later and does not require MySQL, Docker, or Node.js at runtime. Copy `application-local.example.yml` to `application-local.yml`, set the DeepSeek API key, then run:
+
+```cmd
+start.cmd
+```
+
+The script starts the executable Spring Boot JAR and opens `http://127.0.0.1:8123/api/`. Vue is bundled inside the JAR. Conversations persist in the local H2 file `data/coding-agent.mv.db`, while managed project files remain under `.tmp/`. Both directories are intentionally excluded from Git.
+
+The local H2 Console is available at `http://127.0.0.1:8123/api/h2-console` with JDBC URL `jdbc:h2:file:./data/coding-agent`, username `sa`, and an empty password. It is bound to the local machine only.
+
+Build a distributable ZIP from source:
+
+```cmd
+build-package.cmd
+```
+
+The output is `release/coding-agent-windows.zip`. Maven downloads a fixed Node/npm version, runs `npm ci`, builds Vue, executes backend tests, and packages the complete application.
+
+For frontend development, start the backend with `mvn spring-boot:run`, then run `npm ci` followed by `npm run dev` from `frontend/` and open `http://127.0.0.1:5173/`.
+
+## Runtime Limits
+
+- Active SSE runs are kept in memory for a bounded period and use bounded replay buffers. Completed run summaries and tool traces are persisted in H2.
+- DeepSeek transient HTTP failures are retried a small number of times. Authentication and configuration errors are returned immediately with a user-facing diagnosis.
+- The context window is limited by message count, per-message characters, and total characters. Failed or cancelled turns are excluded from later model context.

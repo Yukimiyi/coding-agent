@@ -29,6 +29,7 @@ public record ConversationMessage(
 
     /** 消息是否可用于后续模型上下文。 */
     public enum Status {
+        PENDING,
         SUCCESS,
         ERROR
     }

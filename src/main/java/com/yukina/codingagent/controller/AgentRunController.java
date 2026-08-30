@@ -71,9 +71,17 @@ public class AgentRunController {
     @GetMapping(path = "/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter events(
             @PathVariable String runId,
-            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId,
+            @RequestParam(required = false) Long afterSequence
     ) {
-        return agentRunService.subscribe(runId, parseLastEventId(lastEventId));
+        long parsedHeader = parseLastEventId(lastEventId);
+        if (afterSequence != null && afterSequence < 0) {
+            throw new IllegalArgumentException("afterSequence must not be negative");
+        }
+        return agentRunService.subscribe(
+                runId,
+                afterSequence == null ? parsedHeader : Math.max(parsedHeader, afterSequence)
+        );
     }
 
     /** 幂等地请求取消任务并返回最新快照。 */

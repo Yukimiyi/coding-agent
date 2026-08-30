@@ -120,6 +120,21 @@ class AgentLoopTest {
         assertEquals(2, result.toolSteps().size());
     }
 
+    /** 验证因输出长度限制截断的文本不会被误判为完整回答。 */
+    @Test
+    void reportsTruncatedModelResponse() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(DeepSeekMessage.assistant("Partial answer", null, null), "length", 3)
+        );
+
+        AgentRunResult result = loop(client, 4, 4).run("Give a long answer");
+
+        assertFalse(result.completed());
+        assertEquals(AgentRunResult.StopReason.RESPONSE_TRUNCATED, result.stopReason());
+        assertEquals("Partial answer", result.answer());
+    }
+
     /** 验证单轮工具调用数超过上限时拒绝执行。 */
     @Test
     void refusesTooManyToolCallsInOneIteration() {

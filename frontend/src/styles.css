@@ -159,9 +159,9 @@ textarea:focus-visible {
 .workspace-switcher {
   display: grid;
   min-height: 38px;
-  grid-template-columns: 18px minmax(0, 1fr) 28px 28px;
+  grid-template-columns: 18px minmax(0, 1fr) repeat(4, 28px);
   align-items: center;
-  gap: 7px;
+  gap: 4px;
   margin: 0 14px 10px;
   padding: 4px 5px 4px 9px;
   border: 1px solid var(--border);

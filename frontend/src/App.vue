@@ -26,7 +26,7 @@ const messages = ref([])
 const toolSteps = ref([])
 const runActivities = ref([])
 const streamedAnswer = ref('')
-const processedRunEvents = ref(new Set())
+const lastProcessedRunSequence = ref(0)
 const nextCursor = ref(null)
 const hasMoreMessages = ref(false)
 const loadingConversations = ref(true)
@@ -72,6 +72,14 @@ const activeWorkspace = computed(() =>
 
 const workspaceTitle = computed(() => activeConversation.value?.title || '新对话')
 const workspaceContextLabel = computed(() => activeWorkspace.value?.name || '纯对话')
+const dialogIsRename = computed(() => dialogMode.value?.endsWith('rename'))
+const dialogIsWorkspace = computed(() => dialogMode.value?.startsWith('workspace'))
+const dialogHeading = computed(() => {
+  if (dialogIsWorkspace.value) {
+    return dialogIsRename.value ? '重命名项目' : '删除项目'
+  }
+  return dialogIsRename.value ? '重命名对话' : '删除对话'
+})
 
 const canCreateWorkspace = computed(() => {
   if (registeringWorkspace.value) {
@@ -104,7 +112,6 @@ onMounted(async () => {
     await restorePendingRun(pendingRun)
   } else if (conversations.value.length > 0) {
     await selectConversation(conversations.value[0].id)
-    await restoreConversationRun(conversations.value[0].id)
   }
 })
 
@@ -155,7 +162,10 @@ async function selectConversation(conversationId) {
   errorMessage.value = ''
   sidebarOpen.value = false
   await loadMessages(conversationId)
-  await restoreConversationRun(conversationId)
+  const restoredActiveRun = await restoreConversationRun(conversationId)
+  if (!restoredActiveRun) {
+    await loadLatestRunTrace(conversationId)
+  }
 }
 
 async function switchWorkspace(workspaceId) {
@@ -322,7 +332,7 @@ async function restorePendingRun(pendingRun) {
 
 async function restoreConversationRun(conversationId) {
   if (!conversationId || busy.value) {
-    return
+    return false
   }
   try {
     const snapshot = await agentApi.getActiveRun(conversationId)
@@ -334,9 +344,20 @@ async function restoreConversationRun(conversationId) {
         workspaceId: snapshot.workspaceId,
       })
       await attachSnapshot(snapshot)
+      return true
     }
   } catch {
     // 对话历史仍可使用，活跃运行恢复失败不阻塞页面。
+  }
+  return false
+}
+
+async function loadLatestRunTrace(conversationId) {
+  try {
+    const history = await agentApi.getLatestRun(conversationId)
+    toolSteps.value = history?.toolSteps || history?.result?.toolSteps || []
+  } catch {
+    // 历史消息仍可使用，轨迹恢复失败不阻塞会话。
   }
 }
 
@@ -362,13 +383,13 @@ async function attachSnapshot(snapshot) {
   if (isTerminal(snapshot.status)) {
     await finishRun(snapshot)
   } else {
-    connectRunEvents(snapshot.runId)
+    connectRunEvents(snapshot.runId, snapshot.lastSequence || 0)
   }
 }
 
-function connectRunEvents(runId) {
+function connectRunEvents(runId, afterSequence = 0) {
   closeRunEvents()
-  eventSource = new EventSource(agentApi.runEventsUrl(runId))
+  eventSource = new EventSource(agentApi.runEventsUrl(runId, afterSequence))
   eventSource.onmessage = (message) => {
     try {
       handleRunEvent(JSON.parse(message.data))
@@ -393,11 +414,11 @@ function connectRunEvents(runId) {
 }
 
 function handleRunEvent(event) {
-  if (event.sequence && processedRunEvents.value.has(event.sequence)) {
+  if (event.sequence && event.sequence <= lastProcessedRunSequence.value) {
     return
   }
   if (event.sequence) {
-    processedRunEvents.value.add(event.sequence)
+    lastProcessedRunSequence.value = event.sequence
   }
   runStatus.value = event.status
   if (event.iteration) {
@@ -454,14 +475,19 @@ function appendRunActivity(activity) {
 function resetLiveRunOutput() {
   runActivities.value = []
   streamedAnswer.value = ''
-  processedRunEvents.value = new Set()
+  lastProcessedRunSequence.value = 0
 }
 
 function applyRunSnapshot(snapshot) {
   activeRunId.value = snapshot.runId
   runStatus.value = snapshot.status
   currentIteration.value = snapshot.currentIteration || 0
+  lastProcessedRunSequence.value = Math.max(
+    lastProcessedRunSequence.value,
+    snapshot.lastSequence || 0,
+  )
   toolSteps.value = snapshot.toolSteps || snapshot.result?.toolSteps || []
+  streamedAnswer.value = snapshot.liveContent || snapshot.result?.answer || ''
   busy.value = !isTerminal(snapshot.status)
 }
 
@@ -627,15 +653,27 @@ async function downloadWorkspace() {
 }
 
 function openRenameDialog(conversation) {
-  dialogMode.value = 'rename'
+  dialogMode.value = 'conversation-rename'
   dialogTarget.value = conversation
   dialogTitle.value = conversation.title
   nextTick(() => dialogInput.value?.select())
 }
 
 function openDeleteDialog(conversation) {
-  dialogMode.value = 'delete'
+  dialogMode.value = 'conversation-delete'
   dialogTarget.value = conversation
+}
+
+function openRenameWorkspaceDialog(workspace) {
+  dialogMode.value = 'workspace-rename'
+  dialogTarget.value = workspace
+  dialogTitle.value = workspace.name
+  nextTick(() => dialogInput.value?.select())
+}
+
+function openDeleteWorkspaceDialog(workspace) {
+  dialogMode.value = 'workspace-delete'
+  dialogTarget.value = workspace
 }
 
 function closeDialog() {
@@ -650,16 +688,29 @@ async function confirmDialog() {
   }
   const target = dialogTarget.value
   try {
-    if (dialogMode.value === 'rename') {
+    if (dialogMode.value === 'conversation-rename') {
       const title = dialogTitle.value.trim()
       if (!title) {
         return
       }
       await agentApi.renameConversation(target.id, title)
-    } else {
+    } else if (dialogMode.value === 'conversation-delete') {
       await agentApi.deleteConversation(target.id)
       if (selectedConversationId.value === target.id) {
         startNewConversation()
+      }
+    } else if (dialogMode.value === 'workspace-rename') {
+      const name = dialogTitle.value.trim()
+      if (!name) {
+        return
+      }
+      await agentApi.renameWorkspace(target.id, name)
+      await refreshWorkspaces()
+    } else if (dialogMode.value === 'workspace-delete') {
+      await agentApi.deleteWorkspace(target.id)
+      await refreshWorkspaces()
+      if (selectedWorkspaceId.value === target.id) {
+        await switchWorkspace(null)
       }
     }
     closeDialog()
@@ -691,6 +742,8 @@ async function confirmDialog() {
       @workspace-change="switchWorkspace"
       @add-workspace="openWorkspaceDialog"
       @download-workspace="downloadWorkspace"
+      @rename-workspace="openRenameWorkspaceDialog"
+      @delete-workspace="openDeleteWorkspaceDialog"
     />
 
     <section class="workspace-column">
@@ -735,6 +788,7 @@ async function confirmDialog() {
         :activities="runActivities"
         :streamed-answer="streamedAnswer"
         :cancelling="cancelling"
+        :workspace-active="Boolean(selectedWorkspaceId)"
         @send="submitTask"
         @cancel="cancelRun"
         @load-older="loadOlderMessages"
@@ -768,30 +822,31 @@ async function confirmDialog() {
 
     <div v-if="dialogMode" class="dialog-backdrop" @mousedown.self="closeDialog">
       <form class="dialog" @submit.prevent="confirmDialog">
-        <div class="dialog-icon" :class="{ danger: dialogMode === 'delete' }">
-          <Pencil v-if="dialogMode === 'rename'" :size="20" />
+        <div class="dialog-icon" :class="{ danger: !dialogIsRename }">
+          <Pencil v-if="dialogIsRename" :size="20" />
           <AlertTriangle v-else :size="20" />
         </div>
         <button class="icon-button dialog-close" type="button" title="关闭" @click="closeDialog">
           <X :size="18" />
         </button>
-        <h2>{{ dialogMode === 'rename' ? '重命名对话' : '删除对话' }}</h2>
-        <template v-if="dialogMode === 'rename'">
-          <label for="conversation-title">对话标题</label>
+        <h2>{{ dialogHeading }}</h2>
+        <template v-if="dialogIsRename">
+          <label for="conversation-title">{{ dialogIsWorkspace ? '项目名称' : '对话标题' }}</label>
           <input
             id="conversation-title"
             ref="dialogInput"
             v-model="dialogTitle"
-            maxlength="200"
+            :maxlength="dialogIsWorkspace ? 120 : 200"
             autocomplete="off"
           />
         </template>
+        <p v-else-if="dialogIsWorkspace">“{{ dialogTarget?.name }}”仅能在不含对话时删除，托管文件将一并移除。</p>
         <p v-else>“{{ dialogTarget?.title }}”及其全部历史消息将被永久删除。</p>
         <div class="dialog-actions">
           <button class="text-button secondary" type="button" @click="closeDialog">取消</button>
-          <button class="text-button" :class="{ danger: dialogMode === 'delete' }" type="submit">
-            <Trash2 v-if="dialogMode === 'delete'" :size="16" />
-            {{ dialogMode === 'rename' ? '保存' : '删除' }}
+          <button class="text-button" :class="{ danger: !dialogIsRename }" type="submit">
+            <Trash2 v-if="!dialogIsRename" :size="16" />
+            {{ dialogIsRename ? '保存' : '删除' }}
           </button>
         </div>
       </form>

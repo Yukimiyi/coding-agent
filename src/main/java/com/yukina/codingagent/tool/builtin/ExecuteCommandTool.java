@@ -64,6 +64,11 @@ public class ExecuteCommandTool implements AgentTool {
             "show",
             "status"
     );
+    private static final Map<String, Set<String>> FORBIDDEN_INLINE_CODE_FLAGS = Map.of(
+            "python", Set.of("-c"),
+            "python3", Set.of("-c"),
+            "node", Set.of("-e", "--eval", "-p", "--print")
+    );
     private static final DeepSeekToolDefinition DEFINITION = DeepSeekToolDefinition.function(
             "execute_command",
             "Execute an allowlisted build, test, or inspection command inside the workspace. "
@@ -302,6 +307,16 @@ public class ExecuteCommandTool implements AgentTool {
                 );
             }
         }
+        for (int index = 1; index < command.size(); index++) {
+            validateWorkspaceScopedArgument(command.get(index));
+        }
+        Set<String> forbiddenFlags = FORBIDDEN_INLINE_CODE_FLAGS.get(executable);
+        if (forbiddenFlags != null && command.stream().skip(1).anyMatch(forbiddenFlags::contains)) {
+            throw new ToolExecutionException(
+                    "COMMAND_NOT_ALLOWED",
+                    "Inline interpreter code is not allowed; write a workspace file and execute that file instead"
+            );
+        }
         if ("git".equals(executable)) {
             if (command.size() < 2 || !READ_ONLY_GIT_SUBCOMMANDS.contains(command.get(1).toLowerCase(Locale.ROOT))) {
                 throw new ToolExecutionException(
@@ -309,6 +324,24 @@ public class ExecuteCommandTool implements AgentTool {
                         "Only read-only Git subcommands are allowed"
                 );
             }
+        }
+    }
+
+    /** 拒绝命令参数中最直接的绝对路径和父目录穿越。 */
+    private static void validateWorkspaceScopedArgument(String argument) {
+        String normalized = argument.replace('\\', '/');
+        boolean url = normalized.matches("^[a-zA-Z][a-zA-Z0-9+.-]*://.*");
+        boolean windowsAbsolute = normalized.matches(".*[a-zA-Z]:/.*") || normalized.startsWith("//");
+        boolean parentTraversal = normalized.equals("..")
+                || normalized.startsWith("../")
+                || normalized.endsWith("/..")
+                || normalized.contains("/../");
+        boolean posixAbsolute = !isWindows() && normalized.startsWith("/");
+        if (!url && (windowsAbsolute || parentTraversal || posixAbsolute)) {
+            throw new ToolExecutionException(
+                    "PATH_OUTSIDE_WORKSPACE",
+                    "Command arguments must not reference absolute paths or parent directories"
+            );
         }
     }
 

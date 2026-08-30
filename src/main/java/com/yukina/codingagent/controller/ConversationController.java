@@ -1,11 +1,14 @@
 package com.yukina.codingagent.controller;
 
+import com.yukina.codingagent.agent.run.AgentRunHistory;
+import com.yukina.codingagent.agent.run.AgentRunHistoryRepository;
 import com.yukina.codingagent.conversation.model.Conversation;
 import com.yukina.codingagent.conversation.model.MessagePage;
 import com.yukina.codingagent.conversation.service.ConversationService;
 import com.yukina.codingagent.workspace.model.Workspace;
 import com.yukina.codingagent.workspace.service.WorkspaceService;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -28,14 +31,17 @@ public class ConversationController {
 
     private final ConversationService conversationService;
     private final WorkspaceService workspaceService;
+    private final AgentRunHistoryRepository runHistoryRepository;
 
     /** 创建会话管理控制器。 */
     public ConversationController(
             ConversationService conversationService,
-            WorkspaceService workspaceService
+            WorkspaceService workspaceService,
+            AgentRunHistoryRepository runHistoryRepository
     ) {
         this.conversationService = conversationService;
         this.workspaceService = workspaceService;
+        this.runHistoryRepository = runHistoryRepository;
     }
 
     /** 创建一个新会话。 */
@@ -94,6 +100,15 @@ public class ConversationController {
             @RequestParam(defaultValue = "20") int limit
     ) {
         return conversationService.messages(conversationId, beforeId, limit);
+    }
+
+    /** 查询会话最近一次终态运行及其工具轨迹。 */
+    @GetMapping("/{conversationId}/latest-run")
+    public ResponseEntity<AgentRunHistory> latestRun(@PathVariable String conversationId) {
+        conversationService.get(conversationId);
+        return runHistoryRepository.findLatest(conversationId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     /** 删除会话、关联消息及其热缓存。 */

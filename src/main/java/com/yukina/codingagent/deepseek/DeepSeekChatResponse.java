@@ -38,6 +38,14 @@ public record DeepSeekChatResponse(
         return choices.getFirst().message();
     }
 
+    /** 返回第一个候选回复的停止原因。 */
+    public String firstFinishReason() {
+        if (choices == null || choices.isEmpty()) {
+            throw new DeepSeekApiException("DeepSeek API returned no choices", null);
+        }
+        return choices.getFirst().finishReason();
+    }
+
     /**
      * 单个模型候选回复。
      */

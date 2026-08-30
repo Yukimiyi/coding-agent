@@ -39,7 +39,9 @@ public record AgentRunResult(
         MAX_ITERATIONS,
         TOOL_CALL_LIMIT,
         INVALID_TOOL_CALL,
-        REPEATED_TOOL_FAILURE
+        REPEATED_TOOL_FAILURE,
+        RESPONSE_TRUNCATED,
+        MODEL_STOPPED
     }
 
     /**

@@ -6,6 +6,7 @@ import com.yukina.codingagent.conversation.memory.ConversationContextManager;
 import com.yukina.codingagent.conversation.memory.ConversationContextProperties;
 import com.yukina.codingagent.conversation.memory.InMemoryConversationMemoryStore;
 import com.yukina.codingagent.conversation.model.ConversationChatResult;
+import com.yukina.codingagent.conversation.model.ConversationMessage;
 import com.yukina.codingagent.conversation.model.MessagePage;
 import com.yukina.codingagent.conversation.repository.ConversationRepository;
 import com.yukina.codingagent.deepseek.DeepSeekMessage;
@@ -32,6 +33,7 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.any;
@@ -72,6 +74,7 @@ class ConversationAgentServiceTest {
         ConversationContextProperties properties = new ConversationContextProperties(
                 20,
                 1000,
+                4000,
                 Duration.ofMinutes(30),
                 100
         );
@@ -150,6 +153,29 @@ class ConversationAgentServiceTest {
         assertTrue(result.conversationCreated());
         assertNull(conversationService.get(result.conversationId()).workspaceId());
         verify(agentLoop).runWithoutTools(eq("Explain this code"), anyList(), any(), any());
+    }
+
+    /** 验证失败用户轮次不会进入下一次模型上下文。 */
+    @Test
+    void excludesFailedTurnFromFollowingContext() {
+        when(agentLoop.run(eq("Broken request"), anyList(), any(), any()))
+                .thenThrow(new IllegalStateException("model unavailable"));
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> conversationAgentService.chat(null, "workspace-1", "Broken request")
+        );
+        String conversationId = conversationService.list("workspace-1", 10).getFirst().id();
+        when(agentLoop.run(eq("Retry"), anyList(), any(), any())).thenReturn(completed("Recovered"));
+
+        conversationAgentService.chat(conversationId, "Retry");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DeepSeekMessage>> history = ArgumentCaptor.forClass(List.class);
+        verify(agentLoop).run(eq("Retry"), history.capture(), any(), any());
+        assertTrue(history.getValue().isEmpty());
+        MessagePage page = conversationService.messages(conversationId, null, 10);
+        assertEquals(ConversationMessage.Status.ERROR, page.messages().getFirst().status());
     }
 
     /** 创建已成功完成的 Agent 测试结果。 */

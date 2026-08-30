@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -254,6 +255,30 @@ class DeepSeekClientTest {
         assertEquals(401, exception.getStatusCode());
     }
 
+    /** 验证限流响应会按配置重试并最终返回成功结果。 */
+    @Test
+    void retriesTransientRateLimit() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        startServer(exchange -> {
+            if (requests.incrementAndGet() == 1) {
+                respond(exchange, 429, "{\"error\":\"rate limited\"}");
+                return;
+            }
+            respond(exchange, 200, """
+                    {"id":"retry-1","model":"deepseek-v4-flash","choices":[
+                      {"index":0,"message":{"role":"assistant","content":"Recovered"},"finish_reason":"stop"}
+                    ]}
+                    """);
+        });
+
+        DeepSeekChatResponse response = createClient("test-api-key", 1).chat(
+                List.of(DeepSeekMessage.user("Hello"))
+        );
+
+        assertEquals("Recovered", response.firstContent());
+        assertEquals(2, requests.get());
+    }
+
     /** 验证缺失密钥时会在发送网络请求前失败。 */
     @Test
     void rejectsMissingApiKeyBeforeSendingRequest() {
@@ -272,13 +297,20 @@ class DeepSeekClientTest {
 
     /** 创建指向本地测试服务器的 DeepSeek 客户端。 */
     private DeepSeekClient createClient(String apiKey) {
+        return createClient(apiKey, 0);
+    }
+
+    /** 创建具有指定重试次数的测试客户端。 */
+    private DeepSeekClient createClient(String apiKey, int maxRetries) {
         int port = server == null ? 1 : server.getAddress().getPort();
         DeepSeekProperties properties = new DeepSeekProperties(
                 "http://localhost:" + port,
                 apiKey,
                 "deepseek-v4-flash",
                 Duration.ofSeconds(5),
-                false
+                false,
+                maxRetries,
+                Duration.ofMillis(10)
         );
         return new DeepSeekClient(properties, objectMapper);
     }

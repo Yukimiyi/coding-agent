@@ -145,6 +145,20 @@ public class ConversationRepository {
         return new ConversationMessage(key.longValue(), conversationId, role, content, status, now);
     }
 
+    /** 更新一条消息的执行状态。 */
+    public boolean updateMessageStatus(
+            String conversationId,
+            long messageId,
+            ConversationMessage.Status status
+    ) {
+        return jdbcTemplate.update(
+                "UPDATE conversation_messages SET status = ? WHERE conversation_id = ? AND id = ?",
+                status.name(),
+                conversationId,
+                messageId
+        ) > 0;
+    }
+
     /**
      * 查询最近成功消息，并转换为模型需要的时间正序。
      */

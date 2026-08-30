@@ -75,22 +75,32 @@ public class DeepSeekClient {
                 .POST(HttpRequest.BodyPublishers.ofString(toJson(requestBody)))
                 .build();
 
-        try {
-            HttpResponse<String> response = httpClient.send(
-                    request,
-                    HttpResponse.BodyHandlers.ofString()
-            );
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new DeepSeekApiException(response.statusCode(), response.body());
+        for (int attempt = 0; ; attempt++) {
+            try {
+                HttpResponse<String> response = httpClient.send(
+                        request,
+                        HttpResponse.BodyHandlers.ofString()
+                );
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    if (shouldRetry(response.statusCode(), attempt)) {
+                        awaitRetry(attempt);
+                        continue;
+                    }
+                    throw new DeepSeekApiException(response.statusCode(), response.body());
+                }
+                return objectMapper.readValue(response.body(), DeepSeekChatResponse.class);
+            } catch (JacksonException exception) {
+                throw new DeepSeekApiException("Failed to parse DeepSeek response", exception);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new DeepSeekApiException("DeepSeek API request was interrupted", exception);
+            } catch (IOException exception) {
+                if (attempt < properties.maxRetries()) {
+                    awaitRetry(attempt);
+                    continue;
+                }
+                throw new DeepSeekApiException("Failed to call DeepSeek API", exception);
             }
-            return objectMapper.readValue(response.body(), DeepSeekChatResponse.class);
-        } catch (JacksonException exception) {
-            throw new DeepSeekApiException("Failed to parse DeepSeek response", exception);
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new DeepSeekApiException("DeepSeek API request was interrupted", exception);
-        } catch (IOException exception) {
-            throw new DeepSeekApiException("Failed to call DeepSeek API", exception);
         }
     }
 
@@ -130,26 +140,59 @@ public class DeepSeekClient {
                 .POST(HttpRequest.BodyPublishers.ofString(toJson(requestBody)))
                 .build();
 
-        try {
-            HttpResponse<Stream<String>> response = httpClient.send(
-                    request,
-                    HttpResponse.BodyHandlers.ofLines()
-            );
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                try (Stream<String> lines = response.body()) {
-                    throw new DeepSeekApiException(response.statusCode(), String.join("\n", lines.toList()));
+        for (int attempt = 0; ; attempt++) {
+            try {
+                HttpResponse<Stream<String>> response = httpClient.send(
+                        request,
+                        HttpResponse.BodyHandlers.ofLines()
+                );
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    try (Stream<String> lines = response.body()) {
+                        String body = String.join("\n", lines.toList());
+                        if (shouldRetry(response.statusCode(), attempt)) {
+                            awaitRetry(attempt);
+                            continue;
+                        }
+                        throw new DeepSeekApiException(response.statusCode(), body);
+                    }
                 }
+                StreamAccumulator accumulator = new StreamAccumulator();
+                try (Stream<String> lines = response.body()) {
+                    lines.forEach(line -> acceptStreamLine(line, accumulator, safeObserver));
+                }
+                return accumulator.result();
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new DeepSeekApiException("DeepSeek API request was interrupted", exception);
+            } catch (IOException exception) {
+                if (attempt < properties.maxRetries()) {
+                    awaitRetry(attempt);
+                    continue;
+                }
+                throw new DeepSeekApiException("Failed to call DeepSeek API", exception);
             }
-            StreamAccumulator accumulator = new StreamAccumulator();
-            try (Stream<String> lines = response.body()) {
-                lines.forEach(line -> acceptStreamLine(line, accumulator, safeObserver));
-            }
-            return accumulator.result();
+        }
+    }
+
+    /** 仅对限流和典型瞬时服务错误执行有限重试。 */
+    private boolean shouldRetry(int statusCode, int attempt) {
+        return attempt < properties.maxRetries()
+                && (statusCode == 429 || statusCode == 500 || statusCode == 502
+                || statusCode == 503 || statusCode == 504);
+    }
+
+    /** 使用有上限的指数退避等待下一次请求。 */
+    private void awaitRetry(int attempt) {
+        long multiplier = 1L << Math.min(attempt, 4);
+        long delayMillis = Math.min(
+                properties.retryDelay().toMillis() * multiplier,
+                properties.requestTimeout().toMillis()
+        );
+        try {
+            Thread.sleep(delayMillis);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new DeepSeekApiException("DeepSeek API request was interrupted", exception);
-        } catch (IOException exception) {
-            throw new DeepSeekApiException("Failed to call DeepSeek API", exception);
+            throw new DeepSeekApiException("DeepSeek API retry was interrupted", exception);
         }
     }
 
