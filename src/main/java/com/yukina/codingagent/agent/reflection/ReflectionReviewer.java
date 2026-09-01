@@ -1,6 +1,7 @@
 package com.yukina.codingagent.agent.reflection;
 
 import com.yukina.codingagent.agent.AgentRunResult;
+import com.yukina.codingagent.agent.plan.AgentPlan;
 
 import java.util.List;
 
@@ -15,11 +16,13 @@ public interface ReflectionReviewer {
      * @param task 原始用户任务
      * @param candidateAnswer 模型准备返回的候选最终回答
      * @param toolSteps 本次运行已产生的受限工具轨迹
+     * @param plan 可选 Plan-and-Solve 最终计划状态
      * @return PASS 或 REVISE 结论及本次模型用量
      */
     ReflectionReview review(
             String task,
             String candidateAnswer,
-            List<AgentRunResult.ToolStep> toolSteps
+            List<AgentRunResult.ToolStep> toolSteps,
+            AgentPlan plan
     );
 }

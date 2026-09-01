@@ -2,6 +2,11 @@ package com.yukina.codingagent.agent.run;
 
 import com.yukina.codingagent.agent.AgentRunCancelledException;
 import com.yukina.codingagent.agent.AgentRunResult;
+import com.yukina.codingagent.agent.perception.ProjectSnapshot;
+import com.yukina.codingagent.agent.plan.AgentPlan;
+import com.yukina.codingagent.agent.plan.PlanStep;
+import com.yukina.codingagent.agent.plan.PlanStepStatus;
+import com.yukina.codingagent.agent.reflection.ReflectionFeedback;
 import com.yukina.codingagent.conversation.model.ConversationChatResult;
 import com.yukina.codingagent.conversation.model.Conversation;
 import com.yukina.codingagent.conversation.model.ConversationMode;
@@ -55,9 +60,19 @@ class AgentRunServiceTest {
         CountDownLatch release = new CountDownLatch(1);
         when(conversationAgentService.execute(any(), any(), any())).thenAnswer(invocation -> {
             var observer = (com.yukina.codingagent.agent.AgentLoopObserver) invocation.getArgument(1);
+            observer.onPerceptionCompleted(new ProjectSnapshot(true, List.of(), java.util.Map.of(), "java", false));
+            observer.onPlanStarted();
+            observer.onPlanCreated(plan(), false, "执行计划已创建");
             observer.onIterationStarted(1);
             observer.onProgress(1, "分析任务并规划下一步");
+            observer.onThought(1, "读取项目文件并核对内容");
+            observer.onToolStarted(1, "call-1", "read_file", "{\"path\":\"README.md\"}");
             observer.onToolCompleted(toolStep());
+            observer.onReflectionStarted(1);
+            observer.onReflectionCompleted(
+                    1,
+                    new ReflectionFeedback(ReflectionFeedback.Verdict.PASS, "验证证据充分", List.of())
+            );
             observer.onAnswerDelta(1, "Done.");
             assertTrue(release.await(2, TimeUnit.SECONDS));
             return new ConversationChatResult("conversation-1", true, completed());
@@ -75,6 +90,14 @@ class AgentRunServiceTest {
         assertEquals(1, snapshot.toolSteps().size());
         assertEquals("read_file", snapshot.toolSteps().getFirst().toolName());
         assertEquals("Done.", snapshot.liveContent());
+        assertEquals("Test plan", snapshot.plan().goal());
+        assertEquals(4, snapshot.processTrace().size());
+        assertEquals(AgentRunResult.ProcessType.THOUGHT, snapshot.processTrace().get(0).type());
+        assertEquals("读取项目文件并核对内容", snapshot.processTrace().get(0).summary());
+        assertEquals(AgentRunResult.ProcessType.ACTION, snapshot.processTrace().get(1).type());
+        assertEquals(AgentRunResult.ProcessType.OBSERVATION, snapshot.processTrace().get(2).type());
+        assertEquals(AgentRunResult.ProcessType.RESULT_CHECK, snapshot.processTrace().get(3).type());
+        assertEquals(snapshot.processTrace(), snapshot.result().processTrace());
         assertTrue(snapshot.lastSequence() >= 7);
     }
 
@@ -140,6 +163,22 @@ class AgentRunServiceTest {
                 AgentRunResult.StopReason.COMPLETED,
                 List.of(toolStep()),
                 new AgentRunResult.Usage(1, 1, 2)
+        );
+    }
+
+    /** 创建用于快照恢复断言的单步骤计划。 */
+    private static AgentPlan plan() {
+        return new AgentPlan(
+                "Test plan",
+                List.of(new PlanStep(
+                        "step-1",
+                        "Read project",
+                        "read succeeds",
+                        PlanStepStatus.IN_PROGRESS,
+                        List.of(),
+                        null
+                )),
+                List.of("Project inspected")
         );
     }
 

@@ -1,6 +1,7 @@
 package com.yukina.codingagent.agent.run;
 
 import com.yukina.codingagent.agent.AgentRunResult;
+import com.yukina.codingagent.agent.plan.AgentPlan;
 import com.yukina.codingagent.conversation.model.ConversationMode;
 
 import java.time.Instant;
@@ -20,6 +21,8 @@ import java.util.List;
  * @param finishedAt 终止时间
  * @param currentIteration 当前或最后模型轮次
  * @param toolSteps 已完成工具轨迹
+ * @param plan 当前 CODE 运行的最新计划
+ * @param processTrace 当前可恢复的公开工作过程
  * @param liveContent 当前实时回答缓冲区
  * @param result 正常完成时的 Agent 结果
  * @param error 失败或取消时的安全错误说明
@@ -37,6 +40,8 @@ public record AgentRunSnapshot(
         Instant finishedAt,
         int currentIteration,
         List<AgentRunResult.ToolStep> toolSteps,
+        AgentPlan plan,
+        List<AgentRunResult.ProcessEntry> processTrace,
         String liveContent,
         AgentRunResult result,
         String error,
@@ -45,5 +50,6 @@ public record AgentRunSnapshot(
     /** 对工具轨迹创建不可变副本。 */
     public AgentRunSnapshot {
         toolSteps = toolSteps == null ? List.of() : List.copyOf(toolSteps);
+        processTrace = processTrace == null ? List.of() : List.copyOf(processTrace);
     }
 }

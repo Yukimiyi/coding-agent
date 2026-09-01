@@ -1,8 +1,7 @@
 <script setup>
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import {
   Bot,
-  BrainCircuit,
   CheckCircle2,
   ChevronDown,
   Code2,
@@ -12,15 +11,16 @@ import {
   LoaderCircle,
   Menu,
   MessageSquareText,
+  OctagonAlert,
   PanelRight,
   Send,
   ShieldCheck,
   Square,
   SquareTerminal,
   User,
-  Wrench,
 } from 'lucide-vue-next'
 import MessageContent from './MessageContent.vue'
+import ProcessTimeline from './ProcessTimeline.vue'
 
 const props = defineProps({
   conversation: { type: Object, default: null },
@@ -36,6 +36,8 @@ const props = defineProps({
   currentIteration: { type: Number, default: 0 },
   currentToolName: { type: String, default: '' },
   runActivities: { type: Array, default: () => [] },
+  runPlan: { type: Object, default: null },
+  latestRun: { type: Object, default: null },
   streamedAnswer: { type: String, default: '' },
 })
 
@@ -47,6 +49,10 @@ const draft = ref('')
 const composer = ref(null)
 const fileInput = ref(null)
 const folderInput = ref(null)
+const latestAssistantId = computed(() => {
+  const assistantMessages = props.messages.filter((message) => message.role === 'ASSISTANT')
+  return assistantMessages.at(-1)?.id ?? null
+})
 
 /** @returns {void} 提交非空任务并重置输入框。 */
 function sendTask() {
@@ -89,6 +95,20 @@ function runLabel(status, iteration, toolName) {
   if (status === 'QUEUED') return '等待执行'
   if (toolName) return `第 ${iteration || 1} 轮 · ${toolName}`
   return `第 ${iteration || 1} 轮 · Agent 正在工作`
+}
+
+/** @returns {string} 最终计划的简短完成统计。 */
+function planSummary(plan) {
+  if (!plan?.steps?.length) return '工作过程'
+  const completed = plan.steps.filter((step) => step.status === 'COMPLETED').length
+  return `${completed}/${plan.steps.length} 步完成`
+}
+
+/** @param {object} reflection 结果检查统计。 @returns {string} 最终公开状态。 */
+function resultCheckSummary(reflection) {
+  if (!reflection?.rounds) return '任务已完成'
+  if (!reflection.revisions) return '结果检查通过'
+  return `经 ${reflection.revisions} 次检查修正后完成`
 }
 </script>
 
@@ -151,6 +171,36 @@ function runLabel(status, iteration, toolName) {
           <div class="message-body">
             <div class="message-meta"><strong>{{ message.role === 'USER' ? '你' : 'Coding Agent' }}</strong><span>{{ formatTime(message.createdAt) }}</span></div>
             <MessageContent :content="message.content" />
+            <details
+              v-if="message.role === 'ASSISTANT' && message.id === latestAssistantId && (latestRun?.result?.plan || latestRun?.result?.processTrace?.length) && !busy"
+              class="execution-record"
+              open
+            >
+              <summary>
+                <ShieldCheck :size="15" />
+                <span>工作过程</span>
+                <small>{{ planSummary(latestRun.result.plan) }}</small>
+                <ChevronDown :size="14" />
+              </summary>
+              <div class="execution-record-body">
+                <section v-if="latestRun.result.plan" class="execution-plan final-plan" aria-label="任务计划">
+                  <header><strong>任务计划</strong><span>{{ latestRun.result.plan.goal }}</span></header>
+                  <ol>
+                    <li v-for="step in latestRun.result.plan.steps" :key="step.id" :class="step.status.toLowerCase()">
+                      <CheckCircle2 v-if="step.status === 'COMPLETED'" :size="15" />
+                      <OctagonAlert v-else-if="step.status === 'BLOCKED'" :size="15" />
+                      <span v-else class="plan-pending-dot" />
+                      <span>{{ step.description }}</span>
+                    </li>
+                  </ol>
+                </section>
+                <ProcessTimeline :entries="latestRun.result.processTrace || []" />
+                <footer>
+                  <ShieldCheck :size="14" />
+                  <span>{{ resultCheckSummary(latestRun.result.reflection) }}</span>
+                </footer>
+              </div>
+            </details>
           </div>
         </article>
 
@@ -158,24 +208,19 @@ function runLabel(status, iteration, toolName) {
           <div class="message-avatar"><Bot :size="16" /></div>
           <div class="message-body">
             <div class="message-meta"><strong>Coding Agent</strong><span>{{ runLabel(runStatus, currentIteration, currentToolName) }}</span></div>
-            <div class="agent-process">
-              <template v-for="activity in runActivities" :key="activity.id">
-                <div v-if="activity.type === 'progress'" class="process-note progress">
-                  <BrainCircuit :size="15" />
-                  <span class="process-kind">执行进度</span>
-                  <span class="process-summary">{{ activity.message }}</span>
-                </div>
-                <div v-else-if="activity.type === 'reflection'" class="process-note reflection" :class="activity.state">
-                  <ShieldCheck :size="15" />
-                  <span class="process-kind">反思</span>
-                  <span class="process-summary">{{ activity.message }}</span>
-                </div>
-                <details v-else class="process-tool">
-                  <summary><Wrench :size="15" /><span class="process-kind">{{ activity.type === 'action' ? '行动' : '观察' }}</span><code>{{ activity.toolName }}</code><ChevronDown :size="14" /></summary>
-                  <pre class="process-detail">{{ activity.detail || '无返回内容' }}</pre>
-                </details>
-              </template>
-            </div>
+            <section v-if="runPlan" class="execution-plan" aria-label="任务计划">
+              <header><strong>任务计划</strong><span>{{ runPlan.goal }}</span></header>
+              <ol>
+                <li v-for="step in runPlan.steps" :key="step.id" :class="step.status.toLowerCase()">
+                  <CheckCircle2 v-if="step.status === 'COMPLETED'" :size="15" />
+                  <LoaderCircle v-else-if="step.status === 'IN_PROGRESS'" :size="15" class="spin" />
+                  <OctagonAlert v-else-if="step.status === 'BLOCKED'" :size="15" />
+                  <span v-else class="plan-pending-dot" />
+                  <span>{{ step.description }}</span>
+                </li>
+              </ol>
+            </section>
+            <ProcessTimeline :entries="runActivities" />
             <div v-if="streamedAnswer" class="streamed-answer"><MessageContent :content="streamedAnswer" /></div>
             <div v-else class="thinking-line"><span /><span /><span /></div>
           </div>

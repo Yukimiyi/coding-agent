@@ -1,5 +1,7 @@
 package com.yukina.codingagent.agent;
 
+import com.yukina.codingagent.agent.perception.ProjectSnapshot;
+import com.yukina.codingagent.agent.plan.AgentPlan;
 import com.yukina.codingagent.agent.reflection.ReflectionFeedback;
 
 /**
@@ -30,6 +32,37 @@ public interface AgentLoopObserver {
     }
 
     /**
+     * 在程序完成规划前项目感知后触发。
+     *
+     * @param snapshot 受限项目快照
+     */
+    default void onPerceptionCompleted(ProjectSnapshot snapshot) {
+    }
+
+    /** 在无工具 Planner 模型调用开始前触发。 */
+    default void onPlanStarted() {
+    }
+
+    /**
+     * 在初始结构化计划通过解析和规范化后触发。
+     *
+     * @param plan 首步骤已进入 IN_PROGRESS 的计划
+     * @param fallbackUsed 是否使用确定性单步兜底计划
+     * @param notice 可安全展示的规划结果说明
+     */
+    default void onPlanCreated(AgentPlan plan, boolean fallbackUsed, String notice) {
+    }
+
+    /**
+     * 在 update_plan 申请通过程序校验后触发。
+     *
+     * @param plan 更新后的不可变计划
+     * @param summary AI 提供的公开进度摘要
+     */
+    default void onPlanUpdated(AgentPlan plan, String summary) {
+    }
+
+    /**
      * 在收到最终回答的公开文本增量时触发。
      *
      * @param iteration 一基模型调用轮次
@@ -44,6 +77,16 @@ public interface AgentLoopObserver {
      * @param iteration 一基模型调用轮次
      */
     default void onAnswerReset(int iteration) {
+    }
+
+    /**
+     * 在带工具调用的模型响应包含可公开普通文本时触发。
+     * 该文本是模型主动输出的行动说明，不是 reasoning_content 或隐藏思维链。
+     *
+     * @param iteration 一基模型调用轮次
+     * @param summary 已按轨迹上限截断的公开文本
+     */
+    default void onThought(int iteration, String summary) {
     }
 
     /**

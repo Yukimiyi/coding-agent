@@ -1,5 +1,15 @@
 package com.yukina.codingagent.agent;
 
+import com.yukina.codingagent.agent.perception.ProjectSnapshot;
+import com.yukina.codingagent.agent.perception.ProjectSnapshotProvider;
+import com.yukina.codingagent.agent.plan.AgentPlan;
+import com.yukina.codingagent.agent.plan.PlanEvidenceType;
+import com.yukina.codingagent.agent.plan.PlanCoordinator;
+import com.yukina.codingagent.agent.plan.PlanStep;
+import com.yukina.codingagent.agent.plan.PlanStepStatus;
+import com.yukina.codingagent.agent.plan.PlanningProperties;
+import com.yukina.codingagent.agent.plan.PlanningResult;
+import com.yukina.codingagent.agent.plan.PlanningService;
 import com.yukina.codingagent.agent.reflection.ReflectionFeedback;
 import com.yukina.codingagent.agent.reflection.ReflectionProperties;
 import com.yukina.codingagent.agent.reflection.ReflectionReview;
@@ -162,7 +172,15 @@ class AgentLoopTest {
     void publishesIterationAndToolEventsInOrder() {
         DeepSeekClient client = mock(DeepSeekClient.class);
         when(client.chatStream(anyList(), anyList(), any())).thenReturn(
-                response(toolMessage(call("echo", "call-live", "{\"text\":\"live\"}")), "tool_calls", 2),
+                response(
+                        DeepSeekMessage.assistant(
+                                "I will run the echo tool.",
+                                null,
+                                List.of(call("echo", "call-live", "{\"text\":\"live\"}"))
+                        ),
+                        "tool_calls",
+                        2
+                ),
                 response(DeepSeekMessage.assistant("Done.", null, null), "stop", 2)
         );
         List<String> events = new java.util.ArrayList<>();
@@ -175,6 +193,11 @@ class AgentLoopTest {
             @Override
             public void onProgress(int iteration, String summary) {
                 events.add("progress:" + iteration);
+            }
+
+            @Override
+            public void onThought(int iteration, String summary) {
+                events.add("thought:" + iteration + ":" + summary);
             }
 
             @Override
@@ -198,6 +221,7 @@ class AgentLoopTest {
         assertEquals(List.of(
                 "iteration:1",
                 "progress:1",
+                "thought:1:I will run the echo tool.",
                 "model:1:1",
                 "tool-start:echo",
                 "tool-end:echo",
@@ -322,7 +346,7 @@ class AgentLoopTest {
                 )), "tool_calls", 2),
                 response(DeepSeekMessage.assistant("Created Main.java.", null, null), "stop", 3)
         );
-        when(reviewer.review(anyString(), anyString(), anyList())).thenReturn(new ReflectionReview(
+        when(reviewer.review(anyString(), anyString(), anyList(), any())).thenReturn(new ReflectionReview(
                 new ReflectionFeedback(ReflectionFeedback.Verdict.PASS, "实现与现有证据一致", List.of()),
                 new DeepSeekChatResponse.Usage(3, 1, 4)
         ));
@@ -332,7 +356,7 @@ class AgentLoopTest {
         assertTrue(result.completed());
         assertEquals("Created Main.java.", result.answer());
         assertEquals(9, result.usage().totalTokens());
-        verify(reviewer).review(anyString(), anyString(), anyList());
+        verify(reviewer).review(anyString(), anyString(), anyList(), any());
         verify(client, times(2)).chatStream(anyList(), anyList(), any());
     }
 
@@ -350,7 +374,7 @@ class AgentLoopTest {
                 response(DeepSeekMessage.assistant("Initial result.", null, null), "stop", 2),
                 response(DeepSeekMessage.assistant("Corrected and verified result.", null, null), "stop", 2)
         );
-        when(reviewer.review(anyString(), anyString(), anyList())).thenReturn(new ReflectionReview(
+        when(reviewer.review(anyString(), anyString(), anyList(), any())).thenReturn(new ReflectionReview(
                 new ReflectionFeedback(
                         ReflectionFeedback.Verdict.REVISE,
                         "缺少必要验证",
@@ -393,6 +417,95 @@ class AgentLoopTest {
         verifyNoInteractions(reviewer);
     }
 
+    /** 验证 CODE 任务先规划，再通过 update_plan 证据审批后进入 Reflection。 */
+    @Test
+    void executesPlanGuidedReactBeforeReflection() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        ReflectionReviewer reviewer = mock(ReflectionReviewer.class);
+        PlanningService planningService = mock(PlanningService.class);
+        ProjectSnapshotProvider snapshotProvider = mock(ProjectSnapshotProvider.class);
+        AgentPlan initialPlan = new AgentPlan(
+                "Create Main.java",
+                List.of(new PlanStep(
+                        "step-1",
+                        "Create the source file",
+                        "write_file succeeds",
+                        PlanEvidenceType.MUTATION,
+                        PlanStepStatus.IN_PROGRESS,
+                        0,
+                        List.of(),
+                        null
+                )),
+                List.of("Main.java exists")
+        );
+        ProjectSnapshot snapshot = new ProjectSnapshot(true, List.of(), Map.of(), "Available: java", false);
+        when(snapshotProvider.capture()).thenReturn(snapshot);
+        when(planningService.createPlan(anyString(), anyList(), any())).thenReturn(new PlanningResult(
+                initialPlan,
+                new DeepSeekChatResponse.Usage(2, 1, 3),
+                false,
+                "执行计划已创建"
+        ));
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(toolMessage(call(
+                        "write_file",
+                        "call-write-plan",
+                        "{\"path\":\"Main.java\",\"content\":\"class Main {}\"}"
+                )), "tool_calls", 2),
+                response(toolMessage(call(
+                        "update_plan",
+                        "call-plan-update",
+                        "{\"steps\":[{\"id\":\"step-1\",\"status\":\"COMPLETED\","
+                                + "\"evidenceToolCallIds\":[\"call-write-plan\"]}],"
+                                + "\"summary\":\"Source file created\"}"
+                )), "tool_calls", 2),
+                response(DeepSeekMessage.assistant("Created Main.java.", null, null), "stop", 2)
+        );
+        when(reviewer.review(anyString(), anyString(), anyList(), any())).thenReturn(new ReflectionReview(
+                new ReflectionFeedback(ReflectionFeedback.Verdict.PASS, "计划和证据一致", List.of()),
+                new DeepSeekChatResponse.Usage(2, 1, 3)
+        ));
+        List<String> events = new java.util.ArrayList<>();
+        AgentLoopObserver observer = new AgentLoopObserver() {
+            @Override
+            public void onPerceptionCompleted(ProjectSnapshot value) {
+                events.add("perception");
+            }
+
+            @Override
+            public void onPlanCreated(AgentPlan plan, boolean fallbackUsed, String notice) {
+                events.add("plan-created:" + plan.steps().getFirst().status());
+            }
+
+            @Override
+            public void onPlanUpdated(AgentPlan plan, String summary) {
+                events.add("plan-updated:" + plan.steps().getFirst().status());
+            }
+        };
+
+        AgentRunResult result = loop(
+                client,
+                reviewer,
+                planningService,
+                snapshotProvider,
+                true,
+                5,
+                4
+        ).run("Create Main.java", List.of(), observer, AgentRunCancellation.NONE);
+
+        assertTrue(result.completed());
+        assertEquals(PlanStepStatus.COMPLETED, result.plan().steps().getFirst().status());
+        assertEquals(1, result.reflection().rounds());
+        assertEquals(0, result.reflection().revisions());
+        assertEquals(List.of("perception", "plan-created:IN_PROGRESS", "plan-updated:COMPLETED"), events);
+        assertEquals(12, result.usage().totalTokens());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DeepSeekToolDefinition>> tools = ArgumentCaptor.forClass(List.class);
+        verify(client, times(3)).chatStream(anyList(), tools.capture(), any());
+        assertTrue(tools.getAllValues().getFirst().stream()
+                .anyMatch(tool -> "update_plan".equals(tool.function().name())));
+    }
+
     /** 使用测试边界配置创建 Agent 循环。 */
     private AgentLoop loop(DeepSeekClient client, int maxIterations, int maxToolCalls) {
         return loop(client, mock(ReflectionReviewer.class), maxIterations, maxToolCalls);
@@ -410,6 +523,27 @@ class AgentLoopTest {
     private AgentLoop loop(
             DeepSeekClient client,
             ReflectionReviewer reviewer,
+            int maxIterations,
+            int maxToolCalls
+    ) {
+        return loop(
+                client,
+                reviewer,
+                mock(PlanningService.class),
+                mock(ProjectSnapshotProvider.class),
+                false,
+                maxIterations,
+                maxToolCalls
+        );
+    }
+
+    /** 使用可选规划依赖创建完整测试循环。 */
+    private AgentLoop loop(
+            DeepSeekClient client,
+            ReflectionReviewer reviewer,
+            PlanningService planningService,
+            ProjectSnapshotProvider snapshotProvider,
+            boolean planningEnabled,
             int maxIterations,
             int maxToolCalls
     ) {
@@ -465,7 +599,19 @@ class AgentLoopTest {
                 properties,
                 () -> "Detected execution environment. Available: java. Unavailable: none.",
                 reviewer,
-                new ReflectionProperties(1, 10000, "Return PASS or REVISE JSON.")
+                new ReflectionProperties(1, 10000, "Return PASS or REVISE JSON."),
+                snapshotProvider,
+                planningService,
+                new PlanningProperties(
+                        planningEnabled,
+                        6,
+                        10000,
+                        2,
+                        100,
+                        4000,
+                        "Return a structured plan."
+                ),
+                new PlanCoordinator(objectMapper)
         );
     }
 

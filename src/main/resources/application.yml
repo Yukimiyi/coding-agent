@@ -91,7 +91,7 @@ agent:
     ttl: 30m
     max-cached-conversations: 1000
   loop:
-    max-iterations: 16
+    max-iterations: ${CODING_AGENT_MAX_ITERATIONS:32}
     max-tool-calls-per-iteration: 8
     trace-content-limit: 4000
     system-prompt: >
@@ -105,6 +105,23 @@ agent:
       command when the required environment is available. Never claim verification succeeded without a successful tool
       result. In the final response, concisely summarize changed files and verification; artifact download is handled by
       the application.
+  planning:
+    enabled: true
+    max-steps: 6
+    max-context-chars: 24000
+    snapshot-depth: 2
+    max-snapshot-files: 120
+    max-descriptor-chars: 8000
+    system-prompt: >
+      You are the planning phase of a local coding agent. Create a concise public implementation plan from the current
+      task, recent conversation, bounded project snapshot, and execution environment. Return JSON only. Produce between
+      one and six ordered steps. Every step must describe executable project work, an observable verification, and an
+      evidenceType: INSPECTION for read/list/search work, MUTATION for file changes, or VERIFICATION for command-based
+      checks. Separate implementation and verification into different steps when both are required.
+      Do not include private chain-of-thought, do not call tools, do not invent project contents, and do not put status or
+      ids in the output. Use exactly this shape: {"goal":"...","steps":[{"description":"...","verification":"...",
+      "evidenceType":"INSPECTION|MUTATION|VERIFICATION"}],
+      "acceptanceCriteria":["..."]}. The executor assigns stable ids and statuses. Keep acceptance criteria concrete.
   reflection:
     max-rounds: 1
     max-context-chars: 24000

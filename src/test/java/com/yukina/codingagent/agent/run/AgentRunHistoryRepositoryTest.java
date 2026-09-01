@@ -1,6 +1,10 @@
 package com.yukina.codingagent.agent.run;
 
 import com.yukina.codingagent.agent.AgentRunResult;
+import com.yukina.codingagent.agent.plan.AgentPlan;
+import com.yukina.codingagent.agent.plan.PlanEvidenceType;
+import com.yukina.codingagent.agent.plan.PlanStep;
+import com.yukina.codingagent.agent.plan.PlanStepStatus;
 import com.yukina.codingagent.conversation.model.ConversationMode;
 import com.yukina.codingagent.conversation.repository.ConversationRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -44,6 +48,14 @@ class AgentRunHistoryRepositoryTest {
     @Test
     void savesAndRestoresLatestResult() {
         Instant now = Instant.now();
+        AgentPlan plan = new AgentPlan(
+                "Persist result",
+                List.of(new PlanStep(
+                        "step-1", "Inspect result", "read succeeds", PlanEvidenceType.INSPECTION,
+                        PlanStepStatus.COMPLETED, 0, List.of("call-read"), null
+                )),
+                List.of("Result inspected")
+        );
         AgentRunResult result = new AgentRunResult(
                 "Done",
                 "deepseek-test",
@@ -51,8 +63,19 @@ class AgentRunHistoryRepositoryTest {
                 true,
                 AgentRunResult.StopReason.COMPLETED,
                 List.of(),
-                new AgentRunResult.Usage(3, 2, 5)
-        );
+                new AgentRunResult.Usage(3, 2, 5),
+                plan,
+                new AgentRunResult.ReflectionTrace(1, 1)
+        ).withProcessTrace(List.of(new AgentRunResult.ProcessEntry(
+                "thought-1",
+                1,
+                AgentRunResult.ProcessType.THOUGHT,
+                "Inspecting the result",
+                null,
+                null,
+                "",
+                null
+        )));
         repository.save(new AgentRunSnapshot(
                 "run-1",
                 "request-1",
@@ -65,6 +88,8 @@ class AgentRunHistoryRepositoryTest {
                 now,
                 2,
                 List.of(),
+                null,
+                result.processTrace(),
                 "Done",
                 result,
                 null,
@@ -78,5 +103,11 @@ class AgentRunHistoryRepositoryTest {
         assertTrue(restored.toolSteps().isEmpty());
         assertTrue(restored.result().completed());
         assertEquals(5, restored.result().usage().totalTokens());
+        assertEquals("Persist result", restored.result().plan().goal());
+        assertEquals(List.of("call-read"), restored.result().plan().steps().getFirst().evidenceToolCallIds());
+        assertEquals(1, restored.result().reflection().rounds());
+        assertEquals(1, restored.result().reflection().revisions());
+        assertEquals(1, restored.result().processTrace().size());
+        assertEquals("Inspecting the result", restored.result().processTrace().getFirst().summary());
     }
 }

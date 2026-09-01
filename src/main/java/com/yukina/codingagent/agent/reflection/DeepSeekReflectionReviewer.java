@@ -1,6 +1,7 @@
 package com.yukina.codingagent.agent.reflection;
 
 import com.yukina.codingagent.agent.AgentRunResult;
+import com.yukina.codingagent.agent.plan.AgentPlan;
 import com.yukina.codingagent.deepseek.DeepSeekChatResponse;
 import com.yukina.codingagent.deepseek.DeepSeekClient;
 import com.yukina.codingagent.deepseek.DeepSeekMessage;
@@ -49,9 +50,10 @@ public class DeepSeekReflectionReviewer implements ReflectionReviewer {
     public ReflectionReview review(
             String task,
             String candidateAnswer,
-            List<AgentRunResult.ToolStep> toolSteps
+            List<AgentRunResult.ToolStep> toolSteps,
+            AgentPlan plan
     ) {
-        String evidence = buildEvidence(task, candidateAnswer, toolSteps == null ? List.of() : toolSteps);
+        String evidence = buildEvidence(task, candidateAnswer, toolSteps == null ? List.of() : toolSteps, plan);
         DeepSeekChatResponse response = deepSeekClient.chat(
                 List.of(
                         DeepSeekMessage.system(properties.systemPrompt()),
@@ -68,16 +70,21 @@ public class DeepSeekReflectionReviewer implements ReflectionReviewer {
      * @param task 原始任务
      * @param candidateAnswer 候选回答
      * @param toolSteps 受限工具轨迹
+     * @param plan 可选最终计划状态
      * @return 按配置上限截断的审查证据
      */
     private String buildEvidence(
             String task,
             String candidateAnswer,
-            List<AgentRunResult.ToolStep> toolSteps
+            List<AgentRunResult.ToolStep> toolSteps,
+            AgentPlan plan
     ) {
         EvidenceBuilder evidence = new EvidenceBuilder(properties.maxContextChars());
         evidence.section("ORIGINAL TASK", task);
         evidence.section("CANDIDATE FINAL ANSWER", candidateAnswer);
+        if (plan != null) {
+            evidence.section("FINAL EXECUTION PLAN", plan.toPrompt());
+        }
 
         List<String> changes = new ArrayList<>();
         List<String> failures = new ArrayList<>();

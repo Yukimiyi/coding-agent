@@ -11,6 +11,8 @@ const conversations = ref([])
 const selectedConversationId = ref(null)
 const messages = ref([])
 const toolSteps = ref([])
+const runPlan = ref(null)
+const latestRun = ref(null)
 const runActivities = ref([])
 const streamedAnswer = ref('')
 const lastProcessedRunSequence = ref(0)
@@ -101,6 +103,7 @@ async function selectConversation(conversationId) {
   selectedConversationId.value = conversationId
   messages.value = []
   toolSteps.value = []
+  latestRun.value = null
   resetLiveRunOutput()
   nextCursor.value = null
   hasMoreMessages.value = false
@@ -298,6 +301,7 @@ async function restoreConversationRun(conversationId) {
 async function loadLatestRunTrace(conversationId) {
   try {
     const history = await agentApi.getLatestRun(conversationId)
+    latestRun.value = history || null
     toolSteps.value = history?.toolSteps || history?.result?.toolSteps || []
   } catch {
     // 历史消息仍可正常使用。
@@ -353,21 +357,38 @@ function handleRunEvent(event) {
   runStatus.value = event.status
   if (event.iteration) currentIteration.value = event.iteration
   if (event.type === 'ITERATION_STARTED') currentToolName.value = ''
-  else if (event.type === 'PROGRESS') {
-    appendRunActivity({ id: event.sequence, type: event.type.toLowerCase(), message: event.message || '', iteration: event.iteration })
+  else if (event.type === 'PLAN_CREATED' || event.type === 'PLAN_UPDATED') {
+    if (event.plan) runPlan.value = event.plan
+  } else if (event.type === 'PROGRESS') {
+    upsertRunActivity({ id: `thought-${event.iteration}`, type: 'thought', summary: event.message || '', iteration: event.iteration })
+  } else if (event.type === 'THOUGHT') {
+    upsertRunActivity({ id: `thought-${event.iteration}`, type: 'thought', summary: event.message || '', iteration: event.iteration })
   } else if (event.type === 'REFLECTION_STARTED') {
-    upsertRunActivity({ id: `reflection-${event.iteration}`, type: 'reflection', state: 'running', message: event.message || '正在审查当前实现', iteration: event.iteration })
+    upsertRunActivity({ id: `result-check-${event.iteration}`, type: 'result_check', state: 'running', summary: '正在核对修改内容和验证结果', iteration: event.iteration })
   } else if (event.type === 'REFLECTION_COMPLETED') {
-    upsertRunActivity({ id: `reflection-${event.iteration}`, type: 'reflection', state: 'completed', message: event.message || '反思审查完成', iteration: event.iteration })
+    const passed = String(event.message || '').startsWith('PASS')
+    const reviewSummary = String(event.message || '').replace(/^(PASS|REVISE)\s*·\s*/, '')
+    upsertRunActivity({
+      id: `result-check-${event.iteration}`,
+      type: 'result_check',
+      state: passed ? 'completed' : 'revising',
+      success: passed,
+      summary: passed ? '已核对修改内容和验证结果' : `${reviewSummary || '发现需要调整的内容'}，正在继续修正`,
+      iteration: event.iteration,
+    })
   } else if (event.type === 'ANSWER_DELTA') streamedAnswer.value += event.message || ''
   else if (event.type === 'ANSWER_RESET') streamedAnswer.value = ''
   else if (event.type === 'TOOL_STARTED') {
     currentToolName.value = event.toolName || ''
-    appendRunActivity({ id: event.sequence, type: 'action', toolCallId: event.toolCallId, toolName: event.toolName || 'unknown_tool', detail: event.arguments || '{}', iteration: event.iteration })
+    if (event.toolName !== 'update_plan') {
+      appendRunActivity({ id: `action-${event.toolCallId}`, type: 'action', toolCallId: event.toolCallId, toolName: event.toolName || 'unknown_tool', detail: event.arguments || '{}', iteration: event.iteration })
+    }
   } else if (event.type === 'TOOL_COMPLETED' && event.toolStep) {
     currentToolName.value = ''
     upsertToolStep(event.toolStep)
-    appendRunActivity({ id: event.sequence, type: 'observation', toolCallId: event.toolStep.toolCallId, toolName: event.toolStep.toolName || 'unknown_tool', success: event.toolStep.success, detail: event.toolStep.content || event.toolStep.error?.message || '', iteration: event.iteration })
+    if (event.toolStep.toolName !== 'update_plan') {
+      appendRunActivity({ id: `observation-${event.toolStep.toolCallId}`, type: 'observation', summary: event.toolStep.success ? '执行成功' : '执行失败', toolCallId: event.toolStep.toolCallId, toolName: event.toolStep.toolName || 'unknown_tool', success: event.toolStep.success, detail: event.toolStep.content || event.toolStep.error?.message || '', iteration: event.iteration })
+    }
   }
   if (isTerminal(event.status)) finishRun(event)
 }
@@ -384,6 +405,7 @@ function upsertRunActivity(activity) {
 }
 function resetLiveRunOutput() {
   runActivities.value = []
+  runPlan.value = null
   streamedAnswer.value = ''
   lastProcessedRunSequence.value = 0
 }
@@ -393,6 +415,8 @@ function applyRunSnapshot(snapshot) {
   currentIteration.value = snapshot.currentIteration || 0
   lastProcessedRunSequence.value = Math.max(lastProcessedRunSequence.value, snapshot.lastSequence || 0)
   toolSteps.value = snapshot.toolSteps || snapshot.result?.toolSteps || []
+  runPlan.value = snapshot.plan || snapshot.result?.plan || null
+  runActivities.value = snapshot.processTrace || snapshot.result?.processTrace || []
   streamedAnswer.value = snapshot.liveContent || snapshot.result?.answer || ''
   busy.value = !isTerminal(snapshot.status)
 }
@@ -429,7 +453,10 @@ async function finishRun(payload) {
   resetRunState(false)
   await new Promise((resolve) => window.setTimeout(resolve, 180))
   await refreshConversations()
-  if (conversationId) await loadMessages(conversationId)
+  if (conversationId) {
+    await loadMessages(conversationId)
+    await loadLatestRunTrace(conversationId)
+  }
 }
 
 function closeRunEvents() { eventSource?.close(); eventSource = null }
@@ -517,6 +544,8 @@ async function confirmDialog() {
         :current-iteration="currentIteration"
         :current-tool-name="currentToolName"
         :run-activities="runActivities"
+        :run-plan="runPlan"
+        :latest-run="latestRun"
         :streamed-answer="streamedAnswer"
         @menu="sidebarOpen = true"
         @inspector="inspectorOpen = !inspectorOpen"

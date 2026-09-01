@@ -6,8 +6,13 @@ package com.yukina.codingagent.agent.run;
 public enum AgentRunEventType {
     QUEUED,
     RUNNING,
+    PERCEPTION_COMPLETED,
+    PLAN_STARTED,
+    PLAN_CREATED,
+    PLAN_UPDATED,
     ITERATION_STARTED,
     PROGRESS,
+    THOUGHT,
     ANSWER_DELTA,
     ANSWER_RESET,
     MODEL_RESPONSE,

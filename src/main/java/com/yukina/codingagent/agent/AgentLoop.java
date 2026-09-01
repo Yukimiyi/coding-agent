@@ -1,5 +1,13 @@
 package com.yukina.codingagent.agent;
 
+import com.yukina.codingagent.agent.perception.ProjectSnapshot;
+import com.yukina.codingagent.agent.perception.ProjectSnapshotProvider;
+import com.yukina.codingagent.agent.plan.AgentPlan;
+import com.yukina.codingagent.agent.plan.PlanCoordinator;
+import com.yukina.codingagent.agent.plan.PlanUpdateResult;
+import com.yukina.codingagent.agent.plan.PlanningProperties;
+import com.yukina.codingagent.agent.plan.PlanningResult;
+import com.yukina.codingagent.agent.plan.PlanningService;
 import com.yukina.codingagent.agent.reflection.ReflectionFeedback;
 import com.yukina.codingagent.agent.reflection.ReflectionProperties;
 import com.yukina.codingagent.agent.reflection.ReflectionReview;
@@ -8,6 +16,7 @@ import com.yukina.codingagent.deepseek.DeepSeekChatResponse;
 import com.yukina.codingagent.deepseek.DeepSeekClient;
 import com.yukina.codingagent.deepseek.DeepSeekMessage;
 import com.yukina.codingagent.deepseek.DeepSeekToolCall;
+import com.yukina.codingagent.deepseek.DeepSeekToolDefinition;
 import com.yukina.codingagent.tool.ToolExecutionResult;
 import com.yukina.codingagent.tool.ToolExecutor;
 import com.yukina.codingagent.tool.ToolRegistry;
@@ -34,6 +43,10 @@ public class AgentLoop {
             "This is a CODE conversation, but you returned an implementation without changing the project. "
                     + "Apply the requested code with the file tools, verify it when possible, and then summarize. "
                     + "Do not return the implementation only as a code block.";
+    private static final String PLAN_INCOMPLETE_CORRECTION =
+            "You attempted to finish while the public execution plan still has runnable steps. Continue the ReAct "
+                    + "process, obtain real tool evidence, and use update_plan to keep every step status accurate. "
+                    + "Do not claim a step is complete without successful non-plan tool evidence.";
 
     private final DeepSeekClient deepSeekClient;
     private final ToolRegistry toolRegistry;
@@ -42,6 +55,10 @@ public class AgentLoop {
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
     private final ReflectionReviewer reflectionReviewer;
     private final ReflectionProperties reflectionProperties;
+    private final ProjectSnapshotProvider projectSnapshotProvider;
+    private final PlanningService planningService;
+    private final PlanningProperties planningProperties;
+    private final PlanCoordinator planCoordinator;
 
     /**
      * 创建 Agent 循环服务。
@@ -53,6 +70,10 @@ public class AgentLoop {
      * @param executionEnvironmentProvider 当前宿主开发环境摘要提供者
      * @param reflectionReviewer 候选最终回答的无工具审查器
      * @param reflectionProperties 反思次数和上下文边界
+     * @param projectSnapshotProvider 规划前项目感知提供者
+     * @param planningService 无工具计划生成器
+     * @param planningProperties 规划与快照边界
+     * @param planCoordinator update_plan 状态机和证据审批器
      */
     public AgentLoop(
             DeepSeekClient deepSeekClient,
@@ -61,7 +82,11 @@ public class AgentLoop {
             AgentLoopProperties properties,
             ExecutionEnvironmentProvider executionEnvironmentProvider,
             ReflectionReviewer reflectionReviewer,
-            ReflectionProperties reflectionProperties
+            ReflectionProperties reflectionProperties,
+            ProjectSnapshotProvider projectSnapshotProvider,
+            PlanningService planningService,
+            PlanningProperties planningProperties,
+            PlanCoordinator planCoordinator
     ) {
         this.deepSeekClient = deepSeekClient;
         this.toolRegistry = toolRegistry;
@@ -70,6 +95,10 @@ public class AgentLoop {
         this.executionEnvironmentProvider = executionEnvironmentProvider;
         this.reflectionReviewer = reflectionReviewer;
         this.reflectionProperties = reflectionProperties;
+        this.projectSnapshotProvider = projectSnapshotProvider;
+        this.planningService = planningService;
+        this.planningProperties = planningProperties;
+        this.planCoordinator = planCoordinator;
     }
 
     /**
@@ -154,16 +183,36 @@ public class AgentLoop {
         AgentLoopObserver safeObserver = observer == null ? AgentLoopObserver.NONE : observer;
         AgentRunCancellation safeCancellation = cancellation == null ? AgentRunCancellation.NONE : cancellation;
 
+        UsageAccumulator usage = new UsageAccumulator();
+        AgentPlan plan = null;
+        if (toolsEnabled && planningProperties.enabled()) {
+            safeCancellation.throwIfCancellationRequested();
+            ProjectSnapshot snapshot = projectSnapshotProvider.capture();
+            safeObserver.onPerceptionCompleted(snapshot);
+            safeObserver.onPlanStarted();
+            PlanningResult planningResult = planningService.createPlan(task, safeHistory, snapshot);
+            safeCancellation.throwIfCancellationRequested();
+            plan = planningResult.plan();
+            usage.add(planningResult.usage());
+            safeObserver.onPlanCreated(
+                    plan,
+                    planningResult.fallbackUsed(),
+                    planningResult.notice()
+            );
+        }
+
         List<DeepSeekMessage> messages = new ArrayList<>();
-        messages.add(DeepSeekMessage.system(systemPrompt(toolsEnabled)));
+        messages.add(DeepSeekMessage.system(systemPrompt(toolsEnabled, plan)));
         messages.addAll(safeHistory);
         messages.add(DeepSeekMessage.user(task));
         List<AgentRunResult.ToolStep> toolSteps = new ArrayList<>();
         Set<ToolFailureSignature> failedToolCalls = new HashSet<>();
-        UsageAccumulator usage = new UsageAccumulator();
+        List<DeepSeekToolDefinition> availableTools = availableTools(toolsEnabled, plan != null);
         String model = null;
         boolean applyCodeCorrectionIssued = false;
+        boolean planIncompleteCorrectionIssued = false;
         int reflectionRounds = 0;
+        int reflectionRevisions = 0;
 
         for (int iteration = 1; iteration <= properties.maxIterations(); iteration++) {
             safeCancellation.throwIfCancellationRequested();
@@ -174,7 +223,7 @@ public class AgentLoop {
                 int currentIteration = iteration;
                 response = deepSeekClient.chatStream(
                         List.copyOf(messages),
-                        toolsEnabled ? toolRegistry.definitions() : List.of(),
+                        availableTools,
                         delta -> safeObserver.onAnswerDelta(currentIteration, delta)
                 );
             } catch (RuntimeException exception) {
@@ -199,11 +248,17 @@ public class AgentLoop {
                         false,
                         AgentRunResult.StopReason.RESPONSE_TRUNCATED,
                         toolSteps,
-                        usage
+                        usage,
+                        plan,
+                        reflectionRounds,
+                        reflectionRevisions
                 );
             }
             if (!toolCalls.isEmpty() && assistant.content() != null && !assistant.content().isBlank()) {
                 safeObserver.onAnswerReset(iteration);
+                if (toolsEnabled) {
+                    safeObserver.onThought(iteration, truncate(assistant.content()).value());
+                }
             }
             safeObserver.onModelResponse(iteration, model, toolCalls.size());
             if (!toolsEnabled && !toolCalls.isEmpty()) {
@@ -214,7 +269,10 @@ public class AgentLoop {
                         false,
                         AgentRunResult.StopReason.INVALID_TOOL_CALL,
                         toolSteps,
-                        usage
+                        usage,
+                        plan,
+                        reflectionRounds,
+                        reflectionRevisions
                 );
             }
             if (toolCalls.isEmpty()) {
@@ -229,6 +287,44 @@ public class AgentLoop {
                     continue;
                 }
                 boolean completed = answer != null && !answer.isBlank();
+                if (plan != null && completed && (finishReason == null || "stop".equals(finishReason))) {
+                    if (plan.hasRunnableStep()) {
+                        if (!planIncompleteCorrectionIssued) {
+                            planIncompleteCorrectionIssued = true;
+                            safeObserver.onAnswerReset(iteration);
+                            messages.add(DeepSeekMessage.user(
+                                    PLAN_INCOMPLETE_CORRECTION + "\n\nCurrent plan:\n" + plan.toPrompt()
+                            ));
+                            continue;
+                        }
+                        return result(
+                                answer,
+                                model,
+                                iteration,
+                                false,
+                                AgentRunResult.StopReason.PLAN_INCOMPLETE,
+                                toolSteps,
+                                usage,
+                                plan,
+                                reflectionRounds,
+                                reflectionRevisions
+                        );
+                    }
+                    if (plan.hasBlockedStep()) {
+                        return result(
+                                answer,
+                                model,
+                                iteration,
+                                false,
+                                AgentRunResult.StopReason.PLAN_BLOCKED,
+                                toolSteps,
+                                usage,
+                                plan,
+                                reflectionRounds,
+                                reflectionRevisions
+                        );
+                    }
+                }
                 if (shouldReflect(
                         toolsEnabled,
                         completed,
@@ -239,15 +335,29 @@ public class AgentLoop {
                 )) {
                     safeCancellation.throwIfCancellationRequested();
                     safeObserver.onReflectionStarted(iteration);
-                    ReflectionReview review = reflectionReviewer.review(task, answer, List.copyOf(toolSteps));
+                    ReflectionReview review = reflectionReviewer.review(
+                            task,
+                            answer,
+                            List.copyOf(toolSteps),
+                            plan
+                    );
                     safeCancellation.throwIfCancellationRequested();
                     reflectionRounds++;
                     usage.add(review.usage());
                     ReflectionFeedback feedback = review.feedback();
                     safeObserver.onReflectionCompleted(iteration, feedback);
                     if (feedback.requiresRevision()) {
+                        reflectionRevisions++;
                         safeObserver.onAnswerReset(iteration);
-                        messages.add(DeepSeekMessage.user(feedback.revisionInstruction()));
+                        if (plan != null) {
+                            plan = planCoordinator.reopenLastStepForRevision(plan, toolSteps.size());
+                            safeObserver.onPlanUpdated(plan, "反思发现问题，重新打开最终步骤");
+                        }
+                        String revisionInstruction = feedback.revisionInstruction();
+                        if (plan != null) {
+                            revisionInstruction += "\n\nUpdated plan after review:\n" + plan.toPrompt();
+                        }
+                        messages.add(DeepSeekMessage.user(revisionInstruction));
                         continue;
                     }
                 }
@@ -259,7 +369,10 @@ public class AgentLoop {
                             false,
                             AgentRunResult.StopReason.MODEL_STOPPED,
                             toolSteps,
-                            usage
+                            usage,
+                            plan,
+                            reflectionRounds,
+                            reflectionRevisions
                     );
                 }
                 return result(
@@ -271,7 +384,10 @@ public class AgentLoop {
                                 ? AgentRunResult.StopReason.COMPLETED
                                 : AgentRunResult.StopReason.EMPTY_RESPONSE,
                         toolSteps,
-                        usage
+                        usage,
+                        plan,
+                        reflectionRounds,
+                        reflectionRevisions
                 );
             }
             if (toolCalls.size() > properties.maxToolCallsPerIteration()) {
@@ -282,7 +398,10 @@ public class AgentLoop {
                         false,
                         AgentRunResult.StopReason.TOOL_CALL_LIMIT,
                         toolSteps,
-                        usage
+                        usage,
+                        plan,
+                        reflectionRounds,
+                        reflectionRevisions
                 );
             }
             if (toolCalls.stream().anyMatch(call -> call == null || call.id() == null || call.id().isBlank())) {
@@ -293,7 +412,10 @@ public class AgentLoop {
                         false,
                         AgentRunResult.StopReason.INVALID_TOOL_CALL,
                         toolSteps,
-                        usage
+                        usage,
+                        plan,
+                        reflectionRounds,
+                        reflectionRevisions
                 );
             }
 
@@ -302,12 +424,23 @@ public class AgentLoop {
                 String toolName = toolCall.function() == null ? null : toolCall.function().name();
                 String arguments = toolCall.function() == null ? null : toolCall.function().arguments();
                 safeObserver.onToolStarted(iteration, toolCall.id(), toolName, truncate(arguments).value());
-                ToolExecutionResult executionResult = toolExecutor.execute(toolCall);
+                PlanUpdateResult planUpdate = null;
+                ToolExecutionResult executionResult;
+                if (plan != null && PlanCoordinator.TOOL_NAME.equals(toolName)) {
+                    planUpdate = planCoordinator.update(toolCall, plan, List.copyOf(toolSteps));
+                    plan = planUpdate.plan();
+                    executionResult = planUpdate.executionResult();
+                } else {
+                    executionResult = toolExecutor.execute(toolCall);
+                }
                 safeCancellation.throwIfCancellationRequested();
                 messages.add(executionResult.toToolMessage());
                 AgentRunResult.ToolStep toolStep = toToolStep(iteration, toolCall, executionResult);
                 toolSteps.add(toolStep);
                 safeObserver.onToolCompleted(toolStep);
+                if (planUpdate != null && planUpdate.success()) {
+                    safeObserver.onPlanUpdated(plan, planUpdate.summary());
+                }
                 if (!toolStep.success()) {
                     ToolFailureSignature signature = new ToolFailureSignature(
                             toolStep.toolName(),
@@ -322,7 +455,10 @@ public class AgentLoop {
                                 false,
                                 AgentRunResult.StopReason.REPEATED_TOOL_FAILURE,
                                 toolSteps,
-                                usage
+                                usage,
+                                plan,
+                                reflectionRounds,
+                                reflectionRevisions
                         );
                     }
                 }
@@ -336,7 +472,10 @@ public class AgentLoop {
                 false,
                 AgentRunResult.StopReason.MAX_ITERATIONS,
                 toolSteps,
-                usage
+                usage,
+                plan,
+                reflectionRounds,
+                reflectionRevisions
         );
     }
 
@@ -411,6 +550,9 @@ public class AgentLoop {
      * @param stopReason 停止原因
      * @param toolSteps 工具轨迹
      * @param usage 累计 Token 计数器
+     * @param plan 当前最终公开计划
+     * @param reflectionRounds 已执行反思轮数
+     * @param reflectionRevisions Reflection 要求修正的次数
      * @return 不可变 Agent 执行结果
      */
     private static AgentRunResult result(
@@ -420,7 +562,10 @@ public class AgentLoop {
             boolean completed,
             AgentRunResult.StopReason stopReason,
             List<AgentRunResult.ToolStep> toolSteps,
-            UsageAccumulator usage
+            UsageAccumulator usage,
+            AgentPlan plan,
+            int reflectionRounds,
+            int reflectionRevisions
     ) {
         return new AgentRunResult(
                 answer,
@@ -429,7 +574,9 @@ public class AgentLoop {
                 completed,
                 stopReason,
                 toolSteps,
-                usage.snapshot()
+                usage.snapshot(),
+                plan,
+                new AgentRunResult.ReflectionTrace(reflectionRounds, reflectionRevisions)
         );
     }
 
@@ -448,11 +595,47 @@ public class AgentLoop {
      * @param toolsEnabled 是否启用工作空间工具
      * @return 纯聊天或带环境摘要的系统提示词
      */
-    private String systemPrompt(boolean toolsEnabled) {
+    private String systemPrompt(boolean toolsEnabled, AgentPlan plan) {
         if (!toolsEnabled) {
             return CHAT_ONLY_SYSTEM_PROMPT;
         }
-        return properties.systemPrompt() + "\n\n" + executionEnvironmentProvider.agentSummary();
+        StringBuilder prompt = new StringBuilder(properties.systemPrompt())
+                .append("\n\n").append(executionEnvironmentProvider.agentSummary());
+        if (plan != null) {
+            prompt.append("\n\nPUBLIC EXECUTION PLAN\n")
+                    .append(plan.toPrompt())
+                    .append("\n\nFollow this plan as a high-level guide while using ReAct to adapt actions to observations. ")
+                    .append("After obtaining tool evidence, call update_plan with every step before moving on. ")
+                    .append("Do not call update_plan at the start merely to announce the existing statuses; execute the ")
+                    .append("current IN_PROGRESS step first and submit it only when a status or evidence changes. ")
+                    .append("If one tool batch already completed multiple adjacent steps, report all of those real status ")
+                    .append("changes together; the coordinator will bind separate matching evidence to each step. ")
+                    .append("Omit evidenceToolCallIds unless you need to provide exact protocol call-id hints. The ")
+                    .append("coordinator automatically binds authoritative evidence from the real tool trace. ")
+                    .append("A failed tool call normally leaves the current step IN_PROGRESS. Use BLOCKED only when ")
+                    .append("a supported external blocker is proven by failed tool evidence. Before returning a final ")
+                    .append("answer, all steps must be COMPLETED or a genuine blocker must be recorded.");
+        }
+        return prompt.toString();
+    }
+
+    /**
+     * 合并工作区工具与当前运行专用的 update_plan 定义。
+     *
+     * @param toolsEnabled 是否为 CODE 会话
+     * @param planEnabled 当前运行是否生成了计划
+     * @return 发送给模型的不可变工具定义列表
+     */
+    private List<DeepSeekToolDefinition> availableTools(boolean toolsEnabled, boolean planEnabled) {
+        if (!toolsEnabled) {
+            return List.of();
+        }
+        if (!planEnabled) {
+            return toolRegistry.definitions();
+        }
+        List<DeepSeekToolDefinition> definitions = new ArrayList<>(toolRegistry.definitions());
+        definitions.add(planCoordinator.definition());
+        return List.copyOf(definitions);
     }
 
     /**

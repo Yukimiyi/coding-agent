@@ -1,6 +1,7 @@
 package com.yukina.codingagent.agent.run;
 
 import com.yukina.codingagent.agent.AgentRunResult;
+import com.yukina.codingagent.agent.plan.AgentPlan;
 
 import java.time.Instant;
 
@@ -19,6 +20,7 @@ import java.time.Instant;
  * @param toolName 可选工具名称
  * @param arguments 可选且受限的工具参数
  * @param toolStep 可选完整工具轨迹项
+ * @param plan 计划创建或更新事件携带的不可变计划
  * @param result 可选最终 Agent 结果
  * @param message 可选公开文本或错误说明
  */
@@ -35,6 +37,7 @@ public record AgentRunEvent(
         String toolName,
         String arguments,
         AgentRunResult.ToolStep toolStep,
+        AgentPlan plan,
         AgentRunResult result,
         String message
 ) {

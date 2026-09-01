@@ -49,7 +49,8 @@ class DeepSeekReflectionReviewerTest {
                                 "{\"exitCode\":1}",
                                 new ToolExecutionResult.Error("COMMAND_FAILED", "exit code 1", Map.of())
                         )
-                )
+                ),
+                null
         );
 
         assertEquals(ReflectionFeedback.Verdict.REVISE, review.feedback().verdict());

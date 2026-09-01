@@ -3,6 +3,8 @@ package com.yukina.codingagent.agent.run;
 import com.yukina.codingagent.agent.AgentLoopObserver;
 import com.yukina.codingagent.agent.AgentRunCancelledException;
 import com.yukina.codingagent.agent.AgentRunResult;
+import com.yukina.codingagent.agent.perception.ProjectSnapshot;
+import com.yukina.codingagent.agent.plan.AgentPlan;
 import com.yukina.codingagent.agent.reflection.ReflectionFeedback;
 import com.yukina.codingagent.conversation.model.ConversationChatResult;
 import com.yukina.codingagent.conversation.model.ConversationMode;
@@ -303,10 +305,97 @@ public class AgentRunService {
 
             @Override
             public void onProgress(int iteration, String summary) {
+                upsertProcessEntry(
+                        state,
+                        new AgentRunResult.ProcessEntry(
+                                thoughtEntryId(iteration),
+                                iteration,
+                                AgentRunResult.ProcessType.THOUGHT,
+                                summary,
+                                null,
+                                null,
+                                "",
+                                null
+                        )
+                );
                 publish(
                         state,
                         AgentRunEventType.PROGRESS,
                         iteration,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        summary,
+                        null
+                );
+            }
+
+            @Override
+            public void onPerceptionCompleted(ProjectSnapshot snapshot) {
+                publish(
+                        state,
+                        AgentRunEventType.PERCEPTION_COMPLETED,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        snapshot.publicSummary(),
+                        null
+                );
+            }
+
+            @Override
+            public void onPlanStarted() {
+                publish(
+                        state,
+                        AgentRunEventType.PLAN_STARTED,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "正在制定执行计划",
+                        null
+                );
+            }
+
+            @Override
+            public void onPlanCreated(AgentPlan plan, boolean fallbackUsed, String notice) {
+                synchronized (state.monitor) {
+                    state.plan = plan;
+                }
+                publish(
+                        state,
+                        AgentRunEventType.PLAN_CREATED,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        notice,
+                        null
+                );
+            }
+
+            @Override
+            public void onPlanUpdated(AgentPlan plan, String summary) {
+                synchronized (state.monitor) {
+                    state.plan = plan;
+                }
+                publish(
+                        state,
+                        AgentRunEventType.PLAN_UPDATED,
+                        state.currentIteration,
                         null,
                         null,
                         null,
@@ -365,6 +454,36 @@ public class AgentRunService {
             }
 
             @Override
+            public void onThought(int iteration, String summary) {
+                upsertProcessEntry(
+                        state,
+                        new AgentRunResult.ProcessEntry(
+                                thoughtEntryId(iteration),
+                                iteration,
+                                AgentRunResult.ProcessType.THOUGHT,
+                                summary,
+                                null,
+                                null,
+                                "",
+                                null
+                        )
+                );
+                publish(
+                        state,
+                        AgentRunEventType.THOUGHT,
+                        iteration,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        summary,
+                        null
+                );
+            }
+
+            @Override
             public void onModelResponse(int iteration, String model, int toolCallCount) {
                 publish(
                         state,
@@ -383,6 +502,19 @@ public class AgentRunService {
 
             @Override
             public void onReflectionStarted(int iteration) {
+                upsertProcessEntry(
+                        state,
+                        new AgentRunResult.ProcessEntry(
+                                resultCheckEntryId(iteration),
+                                iteration,
+                                AgentRunResult.ProcessType.RESULT_CHECK,
+                                "正在核对修改内容和验证结果",
+                                null,
+                                null,
+                                "",
+                                null
+                        )
+                );
                 publish(
                         state,
                         AgentRunEventType.REFLECTION_STARTED,
@@ -400,6 +532,23 @@ public class AgentRunService {
 
             @Override
             public void onReflectionCompleted(int iteration, ReflectionFeedback feedback) {
+                boolean passed = feedback.verdict() == ReflectionFeedback.Verdict.PASS;
+                String summary = passed
+                        ? "已核对修改内容和验证结果"
+                        : feedback.publicSummary() + "，正在继续修正";
+                upsertProcessEntry(
+                        state,
+                        new AgentRunResult.ProcessEntry(
+                                resultCheckEntryId(iteration),
+                                iteration,
+                                AgentRunResult.ProcessType.RESULT_CHECK,
+                                summary,
+                                null,
+                                null,
+                                "",
+                                passed
+                        )
+                );
                 publish(
                         state,
                         AgentRunEventType.REFLECTION_COMPLETED,
@@ -422,6 +571,21 @@ public class AgentRunService {
                     String toolName,
                     String arguments
             ) {
+                if (!"update_plan".equals(toolName)) {
+                    upsertProcessEntry(
+                            state,
+                            new AgentRunResult.ProcessEntry(
+                                    "action-" + toolCallId,
+                                    iteration,
+                                    AgentRunResult.ProcessType.ACTION,
+                                    "调用 " + toolName,
+                                    toolCallId,
+                                    toolName,
+                                    arguments,
+                                    null
+                            )
+                    );
+                }
                 publish(
                         state,
                         AgentRunEventType.TOOL_STARTED,
@@ -441,6 +605,25 @@ public class AgentRunService {
             public void onToolCompleted(AgentRunResult.ToolStep toolStep) {
                 synchronized (state.monitor) {
                     state.toolSteps.add(toolStep);
+                }
+                if (!"update_plan".equals(toolStep.toolName())) {
+                    upsertProcessEntry(
+                            state,
+                            new AgentRunResult.ProcessEntry(
+                                    "observation-" + toolStep.toolCallId(),
+                                    toolStep.iteration(),
+                                    AgentRunResult.ProcessType.OBSERVATION,
+                                    toolStep.success() ? "执行成功" : "执行失败",
+                                    toolStep.toolCallId(),
+                                    toolStep.toolName(),
+                                    toolStep.success()
+                                            ? toolStep.content()
+                                            : toolStep.error() == null
+                                                    ? toolStep.content()
+                                                    : toolStep.error().message(),
+                                    toolStep.success()
+                            )
+                    );
                 }
                 publish(
                         state,
@@ -471,15 +654,47 @@ public class AgentRunService {
                 return;
             }
             state.status = AgentRunStatus.COMPLETED;
-            state.result = result;
+            state.result = result.withProcessTrace(state.processTrace);
             if (state.liveContent.isEmpty() && result.answer() != null) {
                 state.liveContent.append(result.answer());
             }
             state.finishedAt = Instant.now();
+            result = state.result;
         }
         persistHistory(state);
         publish(state, AgentRunEventType.COMPLETED, state.currentIteration, null, null, null, null, null, null, null, result);
         releaseActiveConversation(state);
+    }
+
+    /**
+     * 在有界公开时间线中插入或原地替换条目。
+     *
+     * @param state 当前运行状态
+     * @param entry 新条目；相同 ID 会保留原位置并被更新
+     */
+    private void upsertProcessEntry(RunState state, AgentRunResult.ProcessEntry entry) {
+        synchronized (state.monitor) {
+            for (int index = 0; index < state.processTrace.size(); index++) {
+                if (state.processTrace.get(index).id().equals(entry.id())) {
+                    state.processTrace.set(index, entry);
+                    return;
+                }
+            }
+            state.processTrace.add(entry);
+            while (state.processTrace.size() > properties.maxEventsPerRun()) {
+                state.processTrace.removeFirst();
+            }
+        }
+    }
+
+    /** @return 指定轮次公开思考条目的稳定 ID */
+    private static String thoughtEntryId(int iteration) {
+        return "thought-" + iteration;
+    }
+
+    /** @return 指定轮次结果检查条目的稳定 ID */
+    private static String resultCheckEntryId(int iteration) {
+        return "result-check-" + iteration;
     }
 
     /**
@@ -589,6 +804,9 @@ public class AgentRunService {
                     toolName,
                     arguments,
                     toolStep,
+                    type == AgentRunEventType.PLAN_CREATED || type == AgentRunEventType.PLAN_UPDATED
+                            ? state.plan
+                            : null,
                     result,
                     message
             );
@@ -721,8 +939,10 @@ public class AgentRunService {
         private final AtomicBoolean cancelRequested = new AtomicBoolean();
         private final List<AgentRunEvent> events = new ArrayList<>();
         private final List<AgentRunResult.ToolStep> toolSteps = new ArrayList<>();
+        private final List<AgentRunResult.ProcessEntry> processTrace = new ArrayList<>();
         private final StringBuilder liveContent = new StringBuilder();
         private final Set<SseEmitter> emitters = new LinkedHashSet<>();
+        private volatile AgentPlan plan;
         private volatile AgentRunStatus status = AgentRunStatus.QUEUED;
         private volatile Instant startedAt;
         private volatile Instant finishedAt;
@@ -787,6 +1007,8 @@ public class AgentRunService {
                         finishedAt,
                         currentIteration,
                         toolSteps,
+                        plan,
+                        processTrace,
                         liveContent.toString(),
                         result,
                         error,

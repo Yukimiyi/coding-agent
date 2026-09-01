@@ -1,10 +1,13 @@
 # Coding Agent
 
-A local Spring Boot and Vue coding agent powered by DeepSeek tool calls. The project focuses on a transparent ReAct + Reflection loop: perceive the task, reason about the next step, call a tool, observe the result, review the candidate result once, and stop with a verified answer.
+A local Spring Boot and Vue coding agent powered by DeepSeek tool calls. The project focuses on a transparent Perception + Plan-and-Solve + ReAct + Reflection workflow: capture a bounded project snapshot, create a public plan, adapt actions to observations, review the candidate result once, and stop with a verified answer.
 
 ## Core Design
 
-- `AgentLoop` controls up to 16 model iterations, tool-call parsing, observations, termination, cancellation, retries, and usage accounting.
+- `AgentLoop` controls up to 32 model iterations by default, tool-call parsing, observations, termination, cancellation, retries, and usage accounting. `CODING_AGENT_MAX_ITERATIONS` can override the limit for a specific machine.
+- `ProjectSnapshotProvider` captures a bounded two-level project tree, key build descriptors, and host capabilities before planning. It performs no model call and never modifies files.
+- `PlanningService` makes one tool-free model call for CODE tasks and normalizes the result into at most six public, verifiable steps. Invalid structured output receives one format-repair retry; a second failure produces a visible deterministic one-step fallback plan instead of aborting the run.
+- `PlanCoordinator` owns the immutable plan state. The model can request changes through `update_plan`, but the coordinator validates state transitions, evidence type, evidence activation window, and cross-step evidence ownership before accepting them.
 - `ReflectionReviewer` performs at most one tool-free final review after a real file change. `PASS` completes the run; `REVISE` returns actionable feedback to the ReAct loop while enough iterations remain.
 - `ToolRegistry` exposes structured tool definitions; `ToolExecutor` validates calls and converts failures into model-readable observations.
 - File tools read, search, create, edit, and delete project files inside a bounded directory.
@@ -43,7 +46,11 @@ The download endpoint archives only `workspace/`. Internal data, upload staging,
 4. `POST /api/agent/runs/{runId}/cancel` cancels a queued or running task.
 5. `GET /api/agent/runs/active?conversationId=...` recovers the active run after page refresh.
 
-The public ReAct cycle uses `PROGRESS`, `TOOL_STARTED`, `TOOL_COMPLETED`, and `ANSWER_DELTA` events. Final review adds `REFLECTION_STARTED` and `REFLECTION_COMPLETED`. `PROGRESS` and reflection summaries are generated from public execution evidence rather than private chain-of-thought. Tool arguments and observations remain structured and visually distinct in the client.
+The public lifecycle uses `PERCEPTION_COMPLETED`, `PLAN_STARTED`, `PLAN_CREATED`, `PLAN_UPDATED`, `PROGRESS`, `TOOL_STARTED`, `TOOL_COMPLETED`, and `ANSWER_DELTA` events. Final review adds `REFLECTION_STARTED` and `REFLECTION_COMPLETED`. Plans, progress, and reflection summaries are public work state rather than private chain-of-thought. Tool arguments and observations remain structured and visually distinct in the client.
+
+The plan is a high-level guide, while ReAct remains free to adapt individual actions to tool observations. `update_plan` is an internal run-scoped tool rather than a workspace tool. It accepts only the existing step IDs, permits at most one `IN_PROGRESS` step, and accepts `BLOCKED` only for supported external blockers backed by failed tool evidence. Every step declares `INSPECTION`, `MUTATION`, or `VERIFICATION` evidence. A completed step must reference a matching successful tool call produced after that step entered `IN_PROGRESS`; evidence cannot be replaced on a completed step or reused by another step. The first version deliberately does not perform dynamic replanning.
+
+The terminal `AgentRunResult` contains the final plan, evidence IDs, stop reason, and Reflection round/revision counts. It is stored in the existing H2 `agent_runs.result_json` field. The Vue client restores the latest run after refresh and displays its execution record in a collapsed panel beneath the latest assistant answer.
 
 Reflection is intentionally narrow in the first version. It runs only for a CODE conversation that has successfully called `write_file`, `edit_file`, or `delete_file`, and only when the model is about to return a non-empty final answer. The reviewer receives the original task, candidate answer, changed paths, tool failures, and command-verification evidence. It receives no tools, runs at most once, and reserves two ReAct iterations for a possible correction and new final answer.
 
@@ -76,6 +83,8 @@ start.cmd
 ```
 
 The application opens at `http://127.0.0.1:8123/api/`. Vue is bundled inside the Spring Boot JAR. H2 persists conversations in `data/coding-agent.mv.db`; CODE projects persist under `.tmp/conversations/`.
+
+CODE runs allow 32 ReAct iterations by default so small multi-file projects have room for implementation, recovery, verification, and final review. Set `CODING_AGENT_MAX_ITERATIONS` before startup when a different hard limit is needed; repeated identical tool failures and all existing command limits still apply.
 
 Build the portable Windows package:
 
