@@ -3,8 +3,9 @@ package com.yukina.codingagent.agent.run;
 import com.yukina.codingagent.agent.AgentRunCancelledException;
 import com.yukina.codingagent.agent.AgentRunResult;
 import com.yukina.codingagent.conversation.model.ConversationChatResult;
+import com.yukina.codingagent.conversation.model.Conversation;
+import com.yukina.codingagent.conversation.model.ConversationMode;
 import com.yukina.codingagent.conversation.service.ConversationAgentService;
-import com.yukina.codingagent.workspace.model.Workspace;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,13 +50,13 @@ class AgentRunServiceTest {
     @Test
     void submitsIdempotentlyAndCollectsLiveToolSteps() throws Exception {
         ConversationAgentService.PreparedConversation prepared =
-                new ConversationAgentService.PreparedConversation("conversation-1", true, "test task", workspace());
-        when(conversationAgentService.prepare(null, null, "test task")).thenReturn(prepared);
+                new ConversationAgentService.PreparedConversation(conversation("conversation-1"), true, "test task");
+        when(conversationAgentService.prepare(null, ConversationMode.CHAT, "test task")).thenReturn(prepared);
         CountDownLatch release = new CountDownLatch(1);
         when(conversationAgentService.execute(any(), any(), any())).thenAnswer(invocation -> {
             var observer = (com.yukina.codingagent.agent.AgentLoopObserver) invocation.getArgument(1);
             observer.onIterationStarted(1);
-            observer.onThought(1, "分析任务并规划下一步");
+            observer.onProgress(1, "分析任务并规划下一步");
             observer.onToolCompleted(toolStep());
             observer.onAnswerDelta(1, "Done.");
             assertTrue(release.await(2, TimeUnit.SECONDS));
@@ -67,22 +68,22 @@ class AgentRunServiceTest {
 
         assertEquals(first.runId(), duplicate.runId());
         assertNotNull(first.conversationId());
-        assertEquals("workspace-1", first.workspaceId());
+        assertEquals(ConversationMode.CHAT, first.mode());
         release.countDown();
         AgentRunSnapshot snapshot = awaitTerminal(first.runId());
         assertEquals(AgentRunStatus.COMPLETED, snapshot.status());
         assertEquals(1, snapshot.toolSteps().size());
         assertEquals("read_file", snapshot.toolSteps().getFirst().toolName());
         assertEquals("Done.", snapshot.liveContent());
-        assertTrue(snapshot.lastSequence() >= 8);
+        assertTrue(snapshot.lastSequence() >= 7);
     }
 
     /** 验证取消会中断后台执行且终态不会被完成结果覆盖。 */
     @Test
     void cancelsRunningTask() throws Exception {
         ConversationAgentService.PreparedConversation prepared =
-                new ConversationAgentService.PreparedConversation("conversation-2", false, "long task", workspace());
-        when(conversationAgentService.prepare("conversation-2", null, "long task")).thenReturn(prepared);
+                new ConversationAgentService.PreparedConversation(conversation("conversation-2"), false, "long task");
+        when(conversationAgentService.prepare("conversation-2", ConversationMode.CHAT, "long task")).thenReturn(prepared);
         CountDownLatch started = new CountDownLatch(1);
         when(conversationAgentService.execute(any(), any(), any())).thenAnswer(invocation -> {
             var cancellation = (com.yukina.codingagent.agent.AgentRunCancellation) invocation.getArgument(2);
@@ -142,14 +143,8 @@ class AgentRunServiceTest {
         );
     }
 
-    /** 创建测试工作空间。 */
-    private static Workspace workspace() {
-        return new Workspace(
-                "workspace-1",
-                "Test workspace",
-                "C:\\workspace",
-                Instant.EPOCH,
-                Instant.EPOCH
-        );
+    /** 创建测试会话。 */
+    private static Conversation conversation(String id) {
+        return new Conversation(id, "Test", ConversationMode.CHAT, Instant.EPOCH, Instant.EPOCH);
     }
 }

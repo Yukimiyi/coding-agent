@@ -7,14 +7,14 @@ import java.time.Instant;
  *
  * @param id 会话 ID
  * @param title 会话标题
- * @param workspaceId 会话绑定的工作空间 ID
+ * @param mode CHAT 或 CODE 会话模式
  * @param createdAt 创建时间
  * @param updatedAt 最近活动时间
  */
 public record Conversation(
         String id,
         String title,
-        String workspaceId,
+        ConversationMode mode,
         Instant createdAt,
         Instant updatedAt
 ) {

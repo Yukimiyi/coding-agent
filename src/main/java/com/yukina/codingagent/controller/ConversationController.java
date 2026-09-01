@@ -3,10 +3,10 @@ package com.yukina.codingagent.controller;
 import com.yukina.codingagent.agent.run.AgentRunHistory;
 import com.yukina.codingagent.agent.run.AgentRunHistoryRepository;
 import com.yukina.codingagent.conversation.model.Conversation;
+import com.yukina.codingagent.conversation.model.ConversationMode;
 import com.yukina.codingagent.conversation.model.MessagePage;
 import com.yukina.codingagent.conversation.service.ConversationService;
-import com.yukina.codingagent.workspace.model.Workspace;
-import com.yukina.codingagent.workspace.service.WorkspaceService;
+import com.yukina.codingagent.conversation.workspace.ConversationWorkspaceService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -30,13 +30,19 @@ import java.util.List;
 public class ConversationController {
 
     private final ConversationService conversationService;
-    private final WorkspaceService workspaceService;
+    private final ConversationWorkspaceService workspaceService;
     private final AgentRunHistoryRepository runHistoryRepository;
 
-    /** 创建会话管理控制器。 */
+    /**
+     * 创建会话管理控制器。
+     *
+     * @param conversationService 会话领域服务
+     * @param workspaceService CODE 会话目录状态服务
+     * @param runHistoryRepository 终态运行历史仓储
+     */
     public ConversationController(
             ConversationService conversationService,
-            WorkspaceService workspaceService,
+            ConversationWorkspaceService workspaceService,
             AgentRunHistoryRepository runHistoryRepository
     ) {
         this.conversationService = conversationService;
@@ -44,55 +50,65 @@ public class ConversationController {
         this.runHistoryRepository = runHistoryRepository;
     }
 
-    /** 创建一个新会话。 */
+    /**
+     * 创建一个新会话。
+     *
+     * @param request 可选标题和 CHAT/CODE 模式
+     * @return 新建会话公开响应
+     */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Conversation create(@RequestBody(required = false) CreateConversationRequest request) {
-        String workspaceId = request == null ? null : request.workspaceId();
+    public ConversationResponse create(@RequestBody(required = false) CreateConversationRequest request) {
         String title = request == null ? null : request.title();
-        if (workspaceId != null && !workspaceId.isBlank()) {
-            Workspace workspace = workspaceService.get(workspaceId);
-            workspaceId = workspace.id();
-        }
-        return conversationService.create(title, workspaceId);
+        ConversationMode mode = request == null ? ConversationMode.CHAT : request.mode();
+        return response(conversationService.create(title, mode));
     }
 
-    /** 按最近更新时间倒序列出会话。 */
+    /**
+     * 按最近更新时间倒序列出会话。
+     *
+     * @param limit 最大返回数量
+     * @return 最近会话列表
+     */
     @GetMapping
-    public List<Conversation> list(
-            @RequestParam(defaultValue = "20") int limit,
-            @RequestParam(required = false) String workspaceId,
-            @RequestParam(defaultValue = "false") boolean withoutWorkspace
-    ) {
-        if (withoutWorkspace) {
-            if (workspaceId != null && !workspaceId.isBlank()) {
-                throw new IllegalArgumentException("workspaceId and withoutWorkspace cannot be combined");
-            }
-            return conversationService.listWithoutWorkspace(limit);
-        }
-        if (workspaceId == null || workspaceId.isBlank()) {
-            return conversationService.list(limit);
-        }
-        workspaceService.get(workspaceId);
-        return conversationService.list(workspaceId, limit);
+    public List<ConversationResponse> list(@RequestParam(defaultValue = "20") int limit) {
+        return conversationService.list(limit).stream().map(this::response).toList();
     }
 
-    /** 查询指定会话。 */
+    /**
+     * 查询指定会话。
+     *
+     * @param conversationId 会话 ID
+     * @return 对应会话
+     */
     @GetMapping("/{conversationId}")
-    public Conversation get(@PathVariable String conversationId) {
-        return conversationService.get(conversationId);
+    public ConversationResponse get(@PathVariable String conversationId) {
+        return response(conversationService.get(conversationId));
     }
 
-    /** 修改指定会话的标题。 */
+    /**
+     * 修改指定会话的标题。
+     *
+     * @param conversationId 会话 ID
+     * @param request 新标题请求
+     * @return 更新后的会话
+     */
     @PatchMapping("/{conversationId}")
-    public Conversation rename(
+    public ConversationResponse rename(
             @PathVariable String conversationId,
             @RequestBody RenameConversationRequest request
     ) {
-        return conversationService.rename(conversationId, request == null ? null : request.title());
+        return response(conversationService.rename(conversationId, request == null ? null : request.title()));
     }
 
-    /** 使用稳定 ID 游标分页查询历史消息。 */
+    /**
+     * 使用稳定 ID 游标分页查询历史消息。
+     *
+     * @param conversationId 会话 ID
+     * @param beforeId 可选上页最小消息 ID
+     * @param limit 最大返回数量
+     * @return 按时间正序展示的一页消息
+     */
     @GetMapping("/{conversationId}/messages")
     public MessagePage messages(
             @PathVariable String conversationId,
@@ -102,7 +118,12 @@ public class ConversationController {
         return conversationService.messages(conversationId, beforeId, limit);
     }
 
-    /** 查询会话最近一次终态运行及其工具轨迹。 */
+    /**
+     * 查询会话最近一次终态运行及其工具轨迹。
+     *
+     * @param conversationId 会话 ID
+     * @return 最近运行响应，不存在历史时返回 HTTP 204
+     */
     @GetMapping("/{conversationId}/latest-run")
     public ResponseEntity<AgentRunHistory> latestRun(@PathVariable String conversationId) {
         conversationService.get(conversationId);
@@ -111,18 +132,58 @@ public class ConversationController {
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
-    /** 删除会话、关联消息及其热缓存。 */
+    /**
+     * 删除会话、关联消息及其热缓存。
+     *
+     * @param conversationId 会话 ID
+     */
     @DeleteMapping("/{conversationId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable String conversationId) {
         conversationService.delete(conversationId);
     }
 
-    /** 创建会话请求。 */
-    public record CreateConversationRequest(String title, String workspaceId) {
+    /**
+     * 创建会话请求。
+     *
+     * @param title 可选初始标题
+     * @param mode CHAT 或 CODE；为空时默认 CHAT
+     */
+    public record CreateConversationRequest(String title, ConversationMode mode) {
     }
 
-    /** 修改会话标题请求。 */
+    /** @param title 新会话标题 */
     public record RenameConversationRequest(String title) {
+    }
+
+    /**
+     * 前端使用的会话摘要，不暴露本地目录。
+     *
+     * @param id 会话 ID
+     * @param title 标题
+     * @param mode CHAT 或 CODE
+     * @param artifactAvailable CODE 会话是否已有可下载文件
+     * @param createdAt 创建时间
+     * @param updatedAt 最近活动时间
+     */
+    public record ConversationResponse(
+            String id,
+            String title,
+            ConversationMode mode,
+            boolean artifactAvailable,
+            java.time.Instant createdAt,
+            java.time.Instant updatedAt
+    ) {
+    }
+
+    private ConversationResponse response(Conversation conversation) {
+        return new ConversationResponse(
+                conversation.id(),
+                conversation.title(),
+                conversation.mode(),
+                workspaceService.hasFiles(conversation),
+                conversation.createdAt(),
+                conversation.updatedAt()
+        );
     }
 }

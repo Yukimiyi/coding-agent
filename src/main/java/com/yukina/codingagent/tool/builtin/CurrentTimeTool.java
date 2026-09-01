@@ -31,18 +31,28 @@ public class CurrentTimeTool implements AgentTool {
 
     private final ObjectMapper objectMapper;
 
-    /** 创建当前时间工具。 */
+    /**
+     * 创建当前时间工具。
+     *
+     * @param objectMapper 结果 JSON 序列化器
+     */
     public CurrentTimeTool(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
     }
 
-    /** {@inheritDoc} */
+    /** @return {@code get_current_time} 工具协议定义 */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * 返回服务器当前带时区时间。
+     *
+     * @param arguments 必须为空的参数对象
+     * @return 包含 ISO 时间和时区 ID 的 JSON 字符串
+     * @throws ToolExecutionException 参数非空或结果序列化失败时抛出
+     */
     @Override
     public String execute(JsonNode arguments) {
         if (arguments.size() > 0) {

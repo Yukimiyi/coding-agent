@@ -168,8 +168,8 @@ class AgentLoopTest {
             }
 
             @Override
-            public void onThought(int iteration, String summary) {
-                events.add("thought:" + iteration);
+            public void onProgress(int iteration, String summary) {
+                events.add("progress:" + iteration);
             }
 
             @Override
@@ -192,12 +192,12 @@ class AgentLoopTest {
 
         assertEquals(List.of(
                 "iteration:1",
-                "thought:1",
+                "progress:1",
                 "model:1:1",
                 "tool-start:echo",
                 "tool-end:echo",
                 "iteration:2",
-                "thought:2",
+                "progress:2",
                 "model:2:0"
         ), events);
     }
@@ -267,6 +267,43 @@ class AgentLoopTest {
         assertTrue(result.toolSteps().isEmpty());
     }
 
+    /** 验证 CODE 会话不会把未写入项目的代码块直接当作最终成果。 */
+    @Test
+    void requestsFileChangesWhenModelReturnsCodeWithoutMutation() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(DeepSeekMessage.assistant("```java\nclass Main {}\n```", null, null), "stop", 3),
+                response(DeepSeekMessage.assistant("The project files were updated.", null, null), "stop", 2)
+        );
+
+        AgentRunResult result = loop(client, 4, 4).run("Create Main.java");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DeepSeekMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(client, times(2)).chatStream(messages.capture(), anyList(), any());
+        List<DeepSeekMessage> retry = messages.getAllValues().get(1);
+        assertEquals("user", retry.getLast().role());
+        assertTrue(retry.getLast().content().contains("Apply the requested code with the file tools"));
+        assertEquals("The project files were updated.", result.answer());
+        assertEquals(2, result.iterations());
+    }
+
+    /** 工具会话的系统提示词应包含当前执行环境能力。 */
+    @Test
+    void includesExecutionEnvironmentInToolSystemPrompt() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(DeepSeekMessage.assistant("Done.", null, null), "stop", 2)
+        );
+
+        loop(client, 4, 4).run("Inspect the project");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DeepSeekMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(client).chatStream(messages.capture(), anyList(), any());
+        assertTrue(messages.getValue().getFirst().content().contains("Available: java"));
+    }
+
     /** 使用测试边界配置创建 Agent 循环。 */
     private AgentLoop loop(DeepSeekClient client, int maxIterations, int maxToolCalls) {
         AgentTool echo = new AgentTool() {
@@ -294,7 +331,13 @@ class AgentLoopTest {
                 100,
                 "You are a test coding agent."
         );
-        return new AgentLoop(client, registry, executor, properties);
+        return new AgentLoop(
+                client,
+                registry,
+                executor,
+                properties,
+                () -> "Detected execution environment. Available: java. Unavailable: none."
+        );
     }
 
     /** 创建包含单个工具调用的助手消息。 */

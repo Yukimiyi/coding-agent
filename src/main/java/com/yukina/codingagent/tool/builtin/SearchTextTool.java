@@ -64,7 +64,13 @@ public class SearchTextTool implements AgentTool {
     private final WorkspaceProperties properties;
     private final ObjectMapper objectMapper;
 
-    /** 创建文本搜索工具。 */
+    /**
+     * 创建文本搜索工具。
+     *
+     * @param pathResolver 工作空间路径解析器
+     * @param properties 搜索文件、深度和结果上限配置
+     * @param objectMapper 结果 JSON 序列化器
+     */
     public SearchTextTool(
             WorkspacePathResolver pathResolver,
             WorkspaceProperties properties,
@@ -75,7 +81,7 @@ public class SearchTextTool implements AgentTool {
         this.objectMapper = objectMapper;
     }
 
-    /** {@inheritDoc} */
+    /** @return {@code search_text} 工具协议定义 */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
@@ -83,6 +89,10 @@ public class SearchTextTool implements AgentTool {
 
     /**
      * 按文件模式、深度和结果数量限制搜索文本。
+     *
+     * @param arguments 包含查询文本、路径、Glob、大小写及正则选项的参数对象
+     * @return 包含匹配位置、截断状态和跳过文件数量的 JSON 字符串
+     * @throws ToolExecutionException 参数、路径、正则、Glob 或遍历操作不合法时抛出
      */
     @Override
     public String execute(JsonNode arguments) {
@@ -133,6 +143,15 @@ public class SearchTextTool implements AgentTool {
 
     /**
      * 遍历目录并在达到结果上限后提前终止。
+     *
+     * @param start 搜索起始目录
+     * @param depth 最大遍历深度
+     * @param fileMatcher 文件名 Glob 匹配器
+     * @param searchPattern 文本或正则搜索模式
+     * @param matches 接收匹配结果的可变列表
+     * @param limit 最大可见结果数
+     * @param skippedFiles 跳过文件计数器
+     * @throws IOException 目录遍历或文件读取失败时抛出
      */
     private void searchDirectory(
             Path start,
@@ -144,7 +163,13 @@ public class SearchTextTool implements AgentTool {
             AtomicInteger skippedFiles
     ) throws IOException {
         Files.walkFileTree(start, java.util.Set.of(), depth, new SimpleFileVisitor<>() {
-            /** 在遍历前跳过排除目录。 */
+            /**
+             * 在遍历前跳过排除目录。
+             *
+             * @param directory 即将进入的目录
+             * @param attributes 目录基础属性
+             * @return 继续或跳过子树的控制结果
+             */
             @Override
             public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
                 if (!directory.equals(start) && WorkspaceFilePolicy.isExcludedDirectory(directory)) {
@@ -153,7 +178,14 @@ public class SearchTextTool implements AgentTool {
                 return FileVisitResult.CONTINUE;
             }
 
-            /** 搜索符合条件的普通文件。 */
+            /**
+             * 搜索符合条件的普通文件。
+             *
+             * @param file 当前文件
+             * @param attributes 文件基础属性
+             * @return 继续或终止遍历的控制结果
+             * @throws IOException 文件读取失败时抛出
+             */
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
                 if (attributes.isRegularFile()) {
@@ -166,6 +198,14 @@ public class SearchTextTool implements AgentTool {
 
     /**
      * 逐行搜索单个文件；超大或非 UTF-8 文件计入跳过数量。
+     *
+     * @param file 待搜索文件
+     * @param fileMatcher 文件名 Glob 匹配器
+     * @param searchPattern 文本或正则搜索模式
+     * @param matches 接收匹配结果的可变列表
+     * @param limit 最大可见结果数
+     * @param skippedFiles 跳过文件计数器
+     * @throws IOException 文件属性或内容读取失败时抛出
      */
     private void searchFile(
             Path file,
@@ -202,7 +242,15 @@ public class SearchTextTool implements AgentTool {
         }
     }
 
-    /** 将普通文本或正则查询编译为搜索模式。 */
+    /**
+     * 将普通文本或正则查询编译为搜索模式。
+     *
+     * @param query 查询文本
+     * @param regex 是否将查询解释为正则表达式
+     * @param caseSensitive 是否区分大小写
+     * @return 编译后的搜索模式
+     * @throws ToolExecutionException 正则表达式无效时抛出
+     */
     private static Pattern compilePattern(String query, boolean regex, boolean caseSensitive) {
         int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
         try {
@@ -212,7 +260,13 @@ public class SearchTextTool implements AgentTool {
         }
     }
 
-    /** 编译文件名 Glob，并转换无效模式异常。 */
+    /**
+     * 编译文件名 Glob，并转换无效模式异常。
+     *
+     * @param glob 文件名 Glob 表达式
+     * @return 当前文件系统的路径匹配器
+     * @throws ToolExecutionException 模式为空或语法无效时抛出
+     */
     private static PathMatcher compileFileMatcher(String glob) {
         if (glob.isBlank()) {
             throw new ToolExecutionException("INVALID_ARGUMENTS", "file_pattern must not be blank");
@@ -224,12 +278,24 @@ public class SearchTextTool implements AgentTool {
         }
     }
 
-    /** 截断过长匹配行，限制工具返回体大小。 */
+    /**
+     * 截断过长匹配行，限制工具返回体大小。
+     *
+     * @param line 原始匹配行
+     * @return 不超过固定长度的行摘要
+     */
     private static String abbreviate(String line) {
         return line.length() <= MAX_LINE_LENGTH ? line : line.substring(0, MAX_LINE_LENGTH) + "...";
     }
 
-    /** 单个文本匹配位置及其行内容摘要。 */
+    /**
+     * 单个文本匹配位置及其行内容摘要。
+     *
+     * @param path 工作空间相对文件路径
+     * @param line 一基行号
+     * @param column 一基列号
+     * @param text 截断后的整行文本
+     */
     public record Match(String path, int line, int column, String text) {
     }
 }

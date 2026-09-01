@@ -24,7 +24,12 @@ public final class WorkspaceFilePolicy {
     private WorkspaceFilePolicy() {
     }
 
-    /** 判断目录是否应从列表和搜索中排除。 */
+    /**
+     * 判断目录是否应从列表和搜索中排除。
+     *
+     * @param directory 待检查目录路径
+     * @return 目录名属于构建产物或元数据目录集合时返回 {@code true}
+     */
     public static boolean isExcludedDirectory(Path directory) {
         Path fileName = directory.getFileName();
         return fileName != null

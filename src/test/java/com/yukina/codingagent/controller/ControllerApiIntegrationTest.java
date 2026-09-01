@@ -15,8 +15,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /** 验证应用真实 Spring MVC 路由和 JSON 契约。 */
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:controller-api;DB_CLOSE_DELAY=-1",
-        "agent.workspace-registry.storage-root=target/controller-api-workspaces",
-        "agent.workspace.root=target/controller-api-runtime"
+        "agent.conversation-workspace.storage-root=target/controller-api-conversations",
+        "agent.workspace.root=target/controller-api-runtime",
+        "agent.command.allowed-executables[0]=java"
 })
 @AutoConfigureMockMvc
 class ControllerApiIntegrationTest {
@@ -25,25 +26,36 @@ class ControllerApiIntegrationTest {
     private MockMvc mockMvc;
 
     @Test
-    void createsWorkspaceAndToolFreeConversation() throws Exception {
-        mockMvc.perform(post("/api/workspaces")
-                        .contextPath("/api")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"API project\"}"))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.name").value("API project"))
-                .andExpect(jsonPath("$.type").value("MANAGED"));
-
+    void createsChatAndCodeConversationsWithoutWorkspaceRegistration() throws Exception {
         mockMvc.perform(post("/api/conversations")
                         .contextPath("/api")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"Plain chat\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.title").value("Plain chat"))
-                .andExpect(jsonPath("$.workspaceId").doesNotExist());
+                .andExpect(jsonPath("$.mode").value("CHAT"))
+                .andExpect(jsonPath("$.artifactAvailable").value(false));
+
+        mockMvc.perform(post("/api/conversations")
+                        .contextPath("/api")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"API project\",\"mode\":\"CODE\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.mode").value("CODE"));
 
         mockMvc.perform(get("/api/conversations").contextPath("/api"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].title").value("Plain chat"));
+                .andExpect(jsonPath("$[0].title").value("API project"));
+    }
+
+    /** 环境接口应返回稳定时间戳和工具能力列表。 */
+    @Test
+    void exposesExecutionEnvironmentSnapshot() throws Exception {
+        mockMvc.perform(get("/api/environment").contextPath("/api"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.checkedAt").isNotEmpty())
+                .andExpect(jsonPath("$.tools").isArray())
+                .andExpect(jsonPath("$.tools[0].id").value("java"))
+                .andExpect(jsonPath("$.tools[0].available").isBoolean());
     }
 }

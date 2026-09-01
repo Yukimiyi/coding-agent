@@ -50,7 +50,7 @@ class ExecuteCommandToolTest {
                 64,
                 16,
                 1024,
-                List.of("java", "git", "mvn"),
+                List.of("java", "git", "mvn", "mvnw", "gradlew"),
                 List.of()
         );
         commandTool = new ExecuteCommandTool(
@@ -169,6 +169,20 @@ class ExecuteCommandToolTest {
 
         assertEquals(0, result.path("exitCode").asInt(), result::toPrettyString);
         assertTrue(result.path("stdout").asText().contains("Apache Maven"));
+    }
+
+    /** 验证 Windows 项目根目录中的 Maven Wrapper 无需全局安装 Maven。 */
+    @Test
+    void executesProjectMavenWrapperOnWindows() throws Exception {
+        assumeTrue(System.getProperty("os.name", "").toLowerCase().contains("win"));
+        Files.writeString(workspace.resolve("mvnw.cmd"), "@echo project-wrapper\r\n");
+
+        JsonNode result = execute("""
+                {"command": ["./mvnw.cmd", "--version"]}
+                """);
+
+        assertEquals(0, result.path("exitCode").asInt(), result::toPrettyString);
+        assertTrue(result.path("stdout").asText().contains("project-wrapper"));
     }
 
     /** 验证模型把命令数组额外编码成 JSON 字符串时仍可安全执行。 */
@@ -302,6 +316,22 @@ class ExecuteCommandToolTest {
                 ToolExecutionException.class,
                 () -> commandTool.execute(objectMapper.readTree("""
                         {"command": ["cmd", "/c", "echo unsafe"]}
+                        """))
+        );
+
+        assertEquals("COMMAND_NOT_ALLOWED", exception.code());
+    }
+
+    /** 验证普通项目批处理脚本仍不能借 Wrapper 例外执行。 */
+    @Test
+    void rejectsArbitraryWorkspaceBatchScript() throws Exception {
+        assumeTrue(System.getProperty("os.name", "").toLowerCase().contains("win"));
+        Files.writeString(workspace.resolve("run.cmd"), "@echo unsafe\r\n");
+
+        ToolExecutionException exception = assertThrows(
+                ToolExecutionException.class,
+                () -> commandTool.execute(objectMapper.readTree("""
+                        {"command": ["./run.cmd"]}
                         """))
         );
 

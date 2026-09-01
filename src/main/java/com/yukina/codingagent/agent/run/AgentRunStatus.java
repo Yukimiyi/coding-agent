@@ -12,6 +12,8 @@ public enum AgentRunStatus {
 
     /**
      * 判断当前状态是否已经终止。
+     *
+     * @return 完成、失败或取消状态返回 {@code true}
      */
     public boolean isTerminal() {
         return this == COMPLETED || this == FAILED || this == CANCELLED;

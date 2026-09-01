@@ -39,6 +39,12 @@ const outcomeCounts = computed(() => {
   return counts
 })
 
+/**
+ * 尝试解析工具协议中的 JSON 字符串。
+ *
+ * @param {string|null} value 待解析文本。
+ * @returns {unknown|null} JSON 值；空值或解析失败时返回 `null`。
+ */
 function parseJson(value) {
   if (!value) {
     return null
@@ -50,6 +56,12 @@ function parseJson(value) {
   }
 }
 
+/**
+ * 根据工具结果及命令退出状态划分轨迹结果。
+ *
+ * @param {object} step 工具执行步骤。
+ * @returns {'success'|'warning'|'failure'} 轨迹展示级别。
+ */
 function stepOutcome(step) {
   if (!step.success) {
     return 'failure'
@@ -63,6 +75,12 @@ function stepOutcome(step) {
   return 'success'
 }
 
+/**
+ * 生成人工可读的工具执行结果标签。
+ *
+ * @param {object} step 工具执行步骤。
+ * @returns {string} 成功、超时、退出码或调用失败文本。
+ */
 function outcomeLabel(step) {
   const outcome = stepOutcome(step)
   if (outcome === 'failure') {
@@ -75,11 +93,23 @@ function outcomeLabel(step) {
   return '成功'
 }
 
+/**
+ * 将工具参数或结果格式化为便于检查的文本。
+ *
+ * @param {string|null} value JSON 字符串或普通文本。
+ * @returns {string} 缩进 JSON、原始文本或空值占位符。
+ */
 function formatPayload(value) {
   const parsed = parseJson(value)
   return parsed ? JSON.stringify(parsed, null, 2) : value || '无'
 }
 
+/**
+ * 切换指定工具步骤的展开状态。
+ *
+ * @param {number} index 工具步骤在列表中的索引。
+ * @returns {void}
+ */
 function toggleStep(index) {
   const next = new Set(expandedSteps.value)
   if (next.has(index)) {
@@ -90,6 +120,14 @@ function toggleStep(index) {
   expandedSteps.value = next
 }
 
+/**
+ * 将完整工具调用轨迹复制到剪贴板，并短暂显示成功状态。
+ *
+ * @param {object} step 工具执行步骤。
+ * @param {number} index 工具步骤在列表中的索引。
+ * @returns {Promise<void>} 剪贴板写入完成后结束。
+ * @throws {DOMException} 浏览器拒绝剪贴板权限时抛出。
+ */
 async function copyStep(step, index) {
   const text = `工具：${step.toolName}\n参数：\n${formatPayload(step.arguments)}\n\n结果：\n${formatPayload(step.content)}`
   await navigator.clipboard.writeText(text)

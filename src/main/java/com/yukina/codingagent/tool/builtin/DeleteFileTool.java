@@ -44,19 +44,30 @@ public class DeleteFileTool implements AgentTool {
     private final WorkspacePathResolver pathResolver;
     private final ObjectMapper objectMapper;
 
-    /** 创建受控文件删除工具。 */
+    /**
+     * 创建受控文件删除工具。
+     *
+     * @param pathResolver 工作空间路径解析器
+     * @param objectMapper 结果 JSON 序列化器
+     */
     public DeleteFileTool(WorkspacePathResolver pathResolver, ObjectMapper objectMapper) {
         this.pathResolver = pathResolver;
         this.objectMapper = objectMapper;
     }
 
-    /** {@inheritDoc} */
+    /** @return {@code delete_file} 工具协议定义 */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
     }
 
-    /** 删除经过真实路径校验的普通文件并返回删除记录。 */
+    /**
+     * 删除经过真实路径校验的普通文件并返回删除记录。
+     *
+     * @param arguments 包含工作空间相对 {@code path} 的参数对象
+     * @return 包含路径、原字节数和删除状态的 JSON 字符串
+     * @throws ToolExecutionException 路径无效、不是普通文件、为符号链接或删除失败时抛出
+     */
     @Override
     public String execute(JsonNode arguments) {
         Path path = pathResolver.resolveExisting(ToolArguments.requiredText(arguments, "path"));

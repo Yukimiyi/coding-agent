@@ -19,6 +19,9 @@ public class ToolRegistry {
 
     /**
      * 注册所有工具并拒绝重复名称，保证模型调用具有唯一目标。
+     *
+     * @param registeredTools Spring 容器发现的全部工具实现
+     * @throws IllegalStateException 工具定义为空、名称为空或名称重复时抛出
      */
     public ToolRegistry(List<AgentTool> registeredTools) {
         Map<String, AgentTool> toolsByName = new LinkedHashMap<>();
@@ -35,7 +38,12 @@ public class ToolRegistry {
                 .toList();
     }
 
-    /** 按工具名称查询实现。 */
+    /**
+     * 按工具名称查询实现。
+     *
+     * @param name 工具定义中的 function 名称
+     * @return 匹配工具；名称为空或不存在时返回空 Optional
+     */
     public Optional<AgentTool> find(String name) {
         if (name == null || name.isBlank()) {
             return Optional.empty();
@@ -43,12 +51,18 @@ public class ToolRegistry {
         return Optional.ofNullable(tools.get(name));
     }
 
-    /** 返回全部不可变工具定义。 */
+    /** @return 按注册顺序生成的不可变工具定义列表 */
     public List<DeepSeekToolDefinition> definitions() {
         return definitions;
     }
 
-    /** 从工具定义中提取并校验唯一名称。 */
+    /**
+     * 从工具定义中提取并校验唯一名称。
+     *
+     * @param tool 待注册工具
+     * @return 非空 function 名称
+     * @throws IllegalStateException 工具或定义不完整时抛出
+     */
     private static String toolName(AgentTool tool) {
         if (tool == null || tool.definition() == null || tool.definition().function() == null) {
             throw new IllegalStateException("Tool definition must not be null");

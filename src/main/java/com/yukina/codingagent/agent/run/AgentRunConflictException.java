@@ -5,7 +5,11 @@ package com.yukina.codingagent.agent.run;
  */
 public class AgentRunConflictException extends RuntimeException {
 
-    /** 使用可直接返回客户端的安全说明创建异常。 */
+    /**
+     * 使用可直接返回客户端的安全说明创建异常。
+     *
+     * @param message 不包含内部细节的冲突说明
+     */
     public AgentRunConflictException(String message) {
         super(message);
     }

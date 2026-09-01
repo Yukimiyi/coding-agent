@@ -30,7 +30,11 @@ public record CommandProperties(
         List<String> allowedExecutables,
         List<Path> searchPaths
 ) {
-    /** 校验命令边界并规范化可执行程序白名单。 */
+    /**
+     * 校验命令边界并规范化可执行程序白名单和搜索路径。
+     *
+     * @throws IllegalArgumentException 超时、数量上限或白名单配置不合法时抛出
+     */
     public CommandProperties {
         if (defaultTimeout == null || defaultTimeout.isZero() || defaultTimeout.isNegative()) {
             throw new IllegalArgumentException("agent.command.default-timeout must be positive");
@@ -59,13 +63,21 @@ public record CommandProperties(
                         .toList();
     }
 
-    /** 判断规范化后的程序名称是否位于白名单中。 */
+    /**
+     * 判断规范化后的程序名称是否位于白名单中。
+     *
+     * @param executable 程序名或路径，可以包含 Windows 可执行扩展名
+     * @return 规范化名称存在于白名单时返回 {@code true}
+     */
     public boolean isAllowed(String executable) {
         return allowedExecutables.contains(normalizeExecutable(executable));
     }
 
     /**
      * 将路径和 Windows 可执行扩展名转换为稳定的程序名称。
+     *
+     * @param executable 原始程序名或路径；可以为 {@code null}
+     * @return 小写且不含目录及 exe、cmd、bat、com 扩展名的名称；空值返回空字符串
      */
     public static String normalizeExecutable(String executable) {
         if (executable == null || executable.isBlank()) {

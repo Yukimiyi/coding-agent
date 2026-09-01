@@ -46,7 +46,13 @@ public class ReadFileTool implements AgentTool {
     private final WorkspaceProperties properties;
     private final ObjectMapper objectMapper;
 
-    /** 创建文件读取工具。 */
+    /**
+     * 创建文件读取工具。
+     *
+     * @param pathResolver 工作空间路径解析器
+     * @param properties 文件读取上限配置
+     * @param objectMapper 结果 JSON 序列化器
+     */
     public ReadFileTool(
             WorkspacePathResolver pathResolver,
             WorkspaceProperties properties,
@@ -57,7 +63,7 @@ public class ReadFileTool implements AgentTool {
         this.objectMapper = objectMapper;
     }
 
-    /** {@inheritDoc} */
+    /** @return {@code read_file} 工具协议定义 */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
@@ -65,6 +71,10 @@ public class ReadFileTool implements AgentTool {
 
     /**
      * 读取文件并拒绝目录、超大文件、二进制内容和非 UTF-8 文本。
+     *
+     * @param arguments 包含工作空间相对 {@code path} 的参数对象
+     * @return 包含路径、字节数和完整文本内容的 JSON 字符串
+     * @throws ToolExecutionException 路径、文件类型、大小、编码或读取操作不合法时抛出
      */
     @Override
     public String execute(JsonNode arguments) {

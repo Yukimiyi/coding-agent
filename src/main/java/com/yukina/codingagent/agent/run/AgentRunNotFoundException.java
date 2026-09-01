@@ -5,7 +5,11 @@ package com.yukina.codingagent.agent.run;
  */
 public class AgentRunNotFoundException extends RuntimeException {
 
-    /** 使用指定运行 ID 创建异常。 */
+    /**
+     * 使用指定运行 ID 创建异常。
+     *
+     * @param runId 不存在或已过期的运行 ID
+     */
     public AgentRunNotFoundException(String runId) {
         super("Agent run not found: " + runId);
     }

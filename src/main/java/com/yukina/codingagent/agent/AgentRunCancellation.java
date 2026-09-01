@@ -18,6 +18,8 @@ public interface AgentRunCancellation {
 
     /**
      * 在取消或线程中断时终止当前执行。
+     *
+     * @throws AgentRunCancelledException 已请求取消或当前线程已中断时抛出
      */
     default void throwIfCancellationRequested() {
         if (isCancellationRequested() || Thread.currentThread().isInterrupted()) {

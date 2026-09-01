@@ -69,7 +69,13 @@ public class ListFilesTool implements AgentTool {
     private final WorkspaceProperties properties;
     private final ObjectMapper objectMapper;
 
-    /** 创建目录列表工具。 */
+    /**
+     * 创建目录列表工具。
+     *
+     * @param pathResolver 工作空间路径解析器
+     * @param properties 遍历深度和条目数量上限配置
+     * @param objectMapper 结果 JSON 序列化器
+     */
     public ListFilesTool(
             WorkspacePathResolver pathResolver,
             WorkspaceProperties properties,
@@ -80,7 +86,7 @@ public class ListFilesTool implements AgentTool {
         this.objectMapper = objectMapper;
     }
 
-    /** {@inheritDoc} */
+    /** @return {@code list_files} 工具协议定义 */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
@@ -88,6 +94,10 @@ public class ListFilesTool implements AgentTool {
 
     /**
      * 按深度和数量上限遍历目录，并跳过构建产物目录。
+     *
+     * @param arguments 包含起始路径、递归标记、深度及条目上限的参数对象
+     * @return 包含目录条目和截断状态的 JSON 字符串
+     * @throws ToolExecutionException 路径不是目录、参数越界或遍历失败时抛出
      */
     @Override
     public String execute(JsonNode arguments) {
@@ -111,7 +121,13 @@ public class ListFilesTool implements AgentTool {
 
         try {
             Files.walkFileTree(start, java.util.Set.of(), depth, new SimpleFileVisitor<>() {
-                /** 在进入目录前应用排除策略和数量限制。 */
+                /**
+                 * 在进入目录前应用排除策略和数量限制。
+                 *
+                 * @param directory 即将进入的目录
+                 * @param attributes 目录基础属性
+                 * @return 继续、跳过子树或终止遍历的控制结果
+                 */
                 @Override
                 public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
                     if (!directory.equals(start)) {
@@ -125,7 +141,13 @@ public class ListFilesTool implements AgentTool {
                     return FileVisitResult.CONTINUE;
                 }
 
-                /** 收集普通文件、符号链接和其他文件类型。 */
+                /**
+                 * 收集普通文件、符号链接和其他文件类型。
+                 *
+                 * @param file 当前文件
+                 * @param attributes 文件基础属性
+                 * @return 继续或终止遍历的控制结果
+                 */
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
                     return addEntry(entries, file, attributes, limit)
@@ -151,6 +173,12 @@ public class ListFilesTool implements AgentTool {
 
     /**
      * 将一个文件系统对象转换为列表项，并报告是否已超过返回上限。
+     *
+     * @param entries 接收条目的可变列表
+     * @param path 当前文件系统路径
+     * @param attributes 当前路径基础属性
+     * @param limit 最大可见条目数
+     * @return 加入当前条目后数量超过上限时返回 {@code true}
      */
     private boolean addEntry(List<Entry> entries, Path path, BasicFileAttributes attributes, int limit) {
         String type;
@@ -179,7 +207,14 @@ public class ListFilesTool implements AgentTool {
         return entries.size() > limit;
     }
 
-    /** 目录列表中的单个文件系统对象。 */
+    /**
+     * 目录列表中的单个文件系统对象。
+     *
+     * @param path 工作空间相对路径
+     * @param type directory、file、symlink 或 other
+     * @param size 普通文件字节数，其他类型为 {@code null}
+     * @param modifiedAt 最后修改时间
+     */
     public record Entry(String path, String type, Long size, Instant modifiedAt) {
     }
 }

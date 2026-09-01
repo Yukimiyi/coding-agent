@@ -11,6 +11,10 @@ public interface DeepSeekStreamObserver {
     DeepSeekStreamObserver NONE = delta -> {
     };
 
-    /** 在收到一段公开回答文本时触发。 */
+    /**
+     * 在收到一段公开回答文本时触发。
+     *
+     * @param delta 新收到的公开回答文本片段
+     */
     void onContentDelta(String delta);
 }

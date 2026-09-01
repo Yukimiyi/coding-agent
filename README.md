@@ -1,73 +1,85 @@
 # Coding Agent
 
-A Spring Boot and Vue coding agent that uses DeepSeek tool calls to inspect, edit, and verify projects through workspace-scoped tools.
+A local Spring Boot and Vue coding agent powered by DeepSeek tool calls. The project focuses on a transparent Agent Loop: perceive the task, reason about the next step, call a tool, observe the result, and stop with a verified answer.
 
-> Security boundary: file tools reject absolute paths, traversal, and symbolic-link escapes. Commands are allowlisted and run without a shell, but generated child programs still run with the current operating-system user's permissions. Use the application only with trusted local projects; it is not an OS-level sandbox.
+## Core Design
 
-`execute_command` accepts either inline `stdin` or a workspace-relative `stdin_file` without invoking a shell. Temporary artifacts are removed through the workspace-scoped `delete_file` tool instead of operating-system deletion commands.
+- `AgentLoop` controls up to 16 model iterations, tool-call parsing, observations, termination, cancellation, retries, and usage accounting.
+- `ToolRegistry` exposes structured tool definitions; `ToolExecutor` validates calls and converts failures into model-readable observations.
+- File tools read, search, create, edit, and delete project files inside a bounded directory.
+- `execute_command` runs allowlisted commands without a shell and supports inline `stdin` or a project-relative `stdin_file`.
+- Conversation context is stored in H2 and trimmed by message count and character budget.
+- Asynchronous runs return a `runId`; replayable SSE events stream public progress, tool calls, observations, and answer deltas.
 
-## Projects and Conversations
+The UI deliberately has only two modes:
 
-Workspaces represent persistent projects and may be managed by the application or point to a user-selected local directory. A project can contain multiple conversations, while a conversation may also exist without a project for tool-free code discussion. File tools and `execute_command` are exposed only when the conversation has a workspace.
+- `CHAT`: normal conversation with no file or command tools.
+- `CODE`: one conversation is one project. Uploads, Agent edits, command execution, and downloads all use that conversation's project directory.
 
-- `GET /api/workspaces` lists projects and their `MANAGED` or `LOCAL` type without exposing server paths. No default project is created.
-- `POST /api/workspaces` creates an empty managed workspace from `{ "name": "..." }`.
-- `POST /api/workspaces/local` registers an existing local directory for API and CLI clients.
-- `POST /api/workspaces/{workspaceId}/files` imports browser-selected files or folders as multipart data.
-- `POST /api/workspaces/{workspaceId}/code` writes pasted code to a workspace-relative path.
-- `GET /api/workspaces/{workspaceId}/archive` downloads the current managed project as a ZIP archive.
-- `PATCH /api/workspaces/{workspaceId}` renames its display label.
-- `DELETE /api/workspaces/{workspaceId}` deletes an unused managed project or only unregisters an unused local project.
+There is no project registry, default workspace, or local-path selector. This keeps project management out of the core Agent implementation.
 
-The managed storage container is `${user.dir}/.tmp`. Managed projects use server-generated UUID directories directly under it, and display names never become filesystem paths. Local projects retain their original directories and are modified in place.
+## Project Files
 
-The Vue client can start a pure conversation, create an empty managed project, or upload files and folders. Direct local-directory registration remains available to API and CLI clients. Imports reject absolute paths, traversal, symbolic links, duplicate targets, existing files, and requests over the configured count or byte limits. Runs from different conversations in the same project are serialized; different projects can run in parallel.
+CODE conversations are stored under:
 
-## Async Run API
-
-The Vue client uses an asynchronous protocol so an HTTP request does not wait for the full AgentLoop:
-
-1. `POST /api/agent/runs` returns HTTP 202 with a `runId`.
-2. `GET /api/agent/runs/{runId}/events` streams replayable SSE events.
-3. `GET /api/agent/runs/{runId}` returns the latest status snapshot.
-4. `POST /api/agent/runs/{runId}/cancel` cancels a queued or running task.
-5. `GET /api/agent/runs/active?conversationId={conversationId}` finds an active conversation run.
-
-The client sends a stable `requestId`, stores the active `runId` in `sessionStorage`, and reconnects after a page refresh. Active runs are retained in memory for one hour by default; restarting the backend ends recovery for unfinished runs.
-
-DeepSeek responses use native streaming. The SSE channel publishes the public Agent cycle as `PERCEPTION`, `THOUGHT`, `TOOL_STARTED`, `TOOL_COMPLETED`, and `ANSWER_DELTA` events, followed by a terminal event. `THOUGHT` contains a short program-generated progress summary rather than the model's private chain of thought. Tool calls and observations use structured payloads, while `ANSWER_DELTA` contains the actual final-answer text chunks. The status snapshot also includes `liveContent` for run recovery.
-
-```cmd
-curl.exe -X POST "http://localhost:8123/api/agent/runs" -H "Content-Type: application/json" --data-raw "{\"requestId\":\"demo-1\",\"workspaceId\":\"{workspaceId}\",\"task\":\"Inspect the project and summarize it. Do not modify files.\"}"
-curl.exe -N "http://localhost:8123/api/agent/runs/{runId}/events"
-curl.exe "http://localhost:8123/api/agent/runs/{runId}"
-curl.exe -X POST "http://localhost:8123/api/agent/runs/{runId}/cancel"
+```text
+.tmp/
+|-- conversations/
+|   `-- {conversationId}/
+|       `-- workspace/       # uploaded and Agent-generated project files
+`-- imports/                 # short-lived upload staging; never downloaded
 ```
 
-## Run Locally
+Folder uploads remove one common outer folder, so the selected project contents become the project root. Imports reject absolute paths, traversal, duplicate targets, symbolic-link escapes, existing files, and oversized requests.
 
-The packaged application requires Java 21 or later and does not require MySQL, Docker, or Node.js at runtime. Copy `application-local.example.yml` to `application-local.yml`, set the DeepSeek API key, then run:
+The download endpoint archives only `workspace/`. Internal data, upload staging, H2 files, run metadata, and logs are outside that directory. Regenerable caches such as `.git`, `.gradle`, `.idea`, `node_modules`, `out`, and `target` are explicitly skipped.
+
+## Agent Run API
+
+1. `POST /api/agent/runs` accepts `{ requestId, conversationId, mode, task }` and returns HTTP 202 with a `runId`.
+2. `GET /api/agent/runs/{runId}/events` streams replayable SSE events.
+3. `GET /api/agent/runs/{runId}` returns the latest snapshot.
+4. `POST /api/agent/runs/{runId}/cancel` cancels a queued or running task.
+5. `GET /api/agent/runs/active?conversationId=...` recovers the active run after page refresh.
+
+The public ReAct cycle uses `PROGRESS`, `TOOL_STARTED`, `TOOL_COMPLETED`, and `ANSWER_DELTA` events. `PROGRESS` is generated from public execution state rather than private chain-of-thought. Tool arguments and observations remain structured and visually distinct in the client.
+
+Example CODE run:
+
+```cmd
+curl.exe -X POST "http://localhost:8123/api/agent/runs" -H "Content-Type: application/json" --data-raw "{\"requestId\":\"demo-1\",\"conversationId\":\"{conversationId}\",\"mode\":\"CODE\",\"task\":\"Inspect the project, fix the failing test, and verify the result.\"}"
+curl.exe -N "http://localhost:8123/api/agent/runs/{runId}/events"
+```
+
+Conversation project endpoints:
+
+- `POST /api/conversations` creates a `CHAT` or `CODE` conversation.
+- `POST /api/conversations/{id}/files` uploads files or a folder into a CODE conversation.
+- `POST /api/conversations/{id}/code` imports one pasted UTF-8 source file.
+- `GET /api/conversations/{id}/archive` downloads the current project ZIP.
+
+## Safety Boundary
+
+File tools reject absolute paths, traversal, and symbolic-link escapes. Commands are allowlisted, receive argument arrays rather than shell text, and execute in the current CODE project directory. The packaged application includes Java only; other compilers and SDKs are optional host capabilities reported by the environment panel.
+
+Generated programs still run with the current operating-system user's permissions. This is an application-level boundary, not an operating-system sandbox, so use it with trusted inputs.
+
+## Run and Package
+
+Copy `application-local.example.yml` to `application-local.yml`, configure the DeepSeek API key, and run:
 
 ```cmd
 start.cmd
 ```
 
-The script starts the executable Spring Boot JAR and opens `http://127.0.0.1:8123/api/`. Vue is bundled inside the JAR. Conversations persist in the local H2 file `data/coding-agent.mv.db`, while managed project files remain under `.tmp/`. Both directories are intentionally excluded from Git.
+The application opens at `http://127.0.0.1:8123/api/`. Vue is bundled inside the Spring Boot JAR. H2 persists conversations in `data/coding-agent.mv.db`; CODE projects persist under `.tmp/conversations/`.
 
-The local H2 Console is available at `http://127.0.0.1:8123/api/h2-console` with JDBC URL `jdbc:h2:file:./data/coding-agent`, username `sa`, and an empty password. It is bound to the local machine only.
-
-Build a distributable ZIP from source:
+Build the portable Windows package:
 
 ```cmd
 build-package.cmd
 ```
 
-The output is `release/coding-agent-windows.zip`. Maven downloads a fixed Node/npm version, runs `npm ci`, builds Vue, executes backend tests, and packages the complete application.
+The output is `release/coding-agent-windows.zip`. Maven installs the pinned frontend toolchain, builds Vue, runs tests, packages the JAR, and creates a linked Java runtime. The target machine does not need Java, Node.js, MySQL, or Docker.
 
-For frontend development, start the backend with `mvn spring-boot:run`, then run `npm ci` followed by `npm run dev` from `frontend/` and open `http://127.0.0.1:5173/`.
-
-## Runtime Limits
-
-- Active SSE runs are kept in memory for a bounded period and use bounded replay buffers. Completed run summaries and tool traces are persisted in H2.
-- DeepSeek transient HTTP failures are retried a small number of times. Authentication and configuration errors are returned immediately with a user-facing diagnosis.
-- The context window is limited by message count, per-message characters, and total characters. Failed or cancelled turns are excluded from later model context.
+For development, start the backend with `mvn spring-boot:run`, run `npm ci` and `npm run dev` in `frontend/`, then open `http://127.0.0.1:5173/`.

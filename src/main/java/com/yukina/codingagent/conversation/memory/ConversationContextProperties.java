@@ -22,7 +22,11 @@ public record ConversationContextProperties(
         int maxCachedConversations
 ) {
 
-    /** 校验上下文窗口、缓存容量和 TTL。 */
+    /**
+     * 校验上下文窗口、缓存容量和 TTL。
+     *
+     * @throws IllegalArgumentException 数量边界非正数、总预算过小或 TTL 无效时抛出
+     */
     public ConversationContextProperties {
         if (maxMessages <= 0 || maxContentChars <= 0 || maxTotalContentChars <= 0
                 || maxCachedConversations <= 0) {

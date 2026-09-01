@@ -66,7 +66,13 @@ public class EditFileTool implements AgentTool {
     private final WorkspaceProperties properties;
     private final ObjectMapper objectMapper;
 
-    /** 创建精确文件修改工具。 */
+    /**
+     * 创建精确文件修改工具。
+     *
+     * @param pathResolver 工作空间路径解析器
+     * @param properties 文件读写上限配置
+     * @param objectMapper 结果 JSON 序列化器
+     */
     public EditFileTool(
             WorkspacePathResolver pathResolver,
             WorkspaceProperties properties,
@@ -77,7 +83,7 @@ public class EditFileTool implements AgentTool {
         this.objectMapper = objectMapper;
     }
 
-    /** {@inheritDoc} */
+    /** @return {@code edit_file} 工具协议定义 */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
@@ -85,6 +91,10 @@ public class EditFileTool implements AgentTool {
 
     /**
      * 校验文件和匹配次数后执行原子替换，任一校验失败时保持原文件不变。
+     *
+     * @param arguments 包含路径、旧文本、新文本和可选期望替换次数的参数对象
+     * @return 包含替换次数及修改前后字节数的 JSON 字符串
+     * @throws ToolExecutionException 参数、路径、编码、匹配次数或文件大小不符合要求时抛出
      */
     @Override
     public String execute(JsonNode arguments) {
@@ -164,7 +174,13 @@ public class EditFileTool implements AgentTool {
         }
     }
 
-    /** 统计互不重叠的精确文本出现次数。 */
+    /**
+     * 统计互不重叠的精确文本出现次数。
+     *
+     * @param content 完整文件文本
+     * @param target 非空目标文本
+     * @return 目标文本互不重叠的出现次数
+     */
     private static int countOccurrences(String content, String target) {
         int count = 0;
         int fromIndex = 0;

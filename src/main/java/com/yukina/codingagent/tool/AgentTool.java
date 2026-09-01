@@ -10,6 +10,8 @@ public interface AgentTool {
 
     /**
      * 返回发送给模型的工具名称、描述和参数 Schema。
+     *
+     * @return DeepSeek function calling 协议使用的工具定义
      */
     DeepSeekToolDefinition definition();
 

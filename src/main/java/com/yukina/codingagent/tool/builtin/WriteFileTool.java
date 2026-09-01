@@ -58,7 +58,13 @@ public class WriteFileTool implements AgentTool {
     private final WorkspaceProperties properties;
     private final ObjectMapper objectMapper;
 
-    /** 创建文件写入工具。 */
+    /**
+     * 创建文件写入工具。
+     *
+     * @param pathResolver 工作空间路径解析器
+     * @param properties 文件写入上限配置
+     * @param objectMapper 结果 JSON 序列化器
+     */
     public WriteFileTool(
             WorkspacePathResolver pathResolver,
             WorkspaceProperties properties,
@@ -69,7 +75,7 @@ public class WriteFileTool implements AgentTool {
         this.objectMapper = objectMapper;
     }
 
-    /** {@inheritDoc} */
+    /** @return {@code write_file} 工具协议定义 */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;
@@ -77,6 +83,10 @@ public class WriteFileTool implements AgentTool {
 
     /**
      * 写入完整文件内容，并执行大小、覆盖权限和路径边界校验。
+     *
+     * @param arguments 包含路径、完整内容和可选覆盖标记的参数对象
+     * @return 包含路径、字节数、创建及覆盖状态的 JSON 字符串
+     * @throws ToolExecutionException 内容超限、路径无效、覆盖未授权或写入失败时抛出
      */
     @Override
     public String execute(JsonNode arguments) {

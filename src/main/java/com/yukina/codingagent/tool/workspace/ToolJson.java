@@ -13,7 +13,14 @@ public final class ToolJson {
     private ToolJson() {
     }
 
-    /** 将工具结果序列化为 JSON 字符串。 */
+    /**
+     * 将工具结果序列化为 JSON 字符串。
+     *
+     * @param objectMapper Jackson 序列化器
+     * @param value 待序列化工具结果
+     * @return JSON 字符串
+     * @throws ToolExecutionException Jackson 序列化失败时抛出
+     */
     public static String serialize(ObjectMapper objectMapper, Object value) {
         try {
             return objectMapper.writeValueAsString(value);

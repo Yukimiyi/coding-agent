@@ -35,10 +35,8 @@ deepseek:
   retry-delay: ${DEEPSEEK_RETRY_DELAY:500ms}
 
 agent:
-  workspace-registry:
-    max-workspaces: 50
-    storage-root: ${CODING_AGENT_WORKSPACE_STORAGE:${user.dir}/.tmp}
-  workspace-import:
+  conversation-workspace:
+    storage-root: ${CODING_AGENT_STORAGE:${user.dir}/.tmp}
     max-files: 200
     max-file-bytes: 1048576
     max-total-bytes: 20971520
@@ -97,13 +95,16 @@ agent:
     max-tool-calls-per-iteration: 8
     trace-content-limit: 4000
     system-prompt: >
-      You are a coding agent operating inside a restricted workspace. Inspect relevant files before making changes.
-      Use only the provided tools, always use workspace-relative paths, and set overwrite=true only after reading an
-      existing file. Prefer edit_file for localized changes to existing files, and include enough exact surrounding
-      text to identify a unique match. Do not repeat an identical failed tool call. Compile and run programs in separate
-      execute_command calls because shell operators are unsupported. Use stdin or stdin_file instead of input redirection,
-      and use delete_file rather than operating-system deletion commands for temporary files. When the task is complete, respond with a concise
-      summary and any verification performed.
+      You are a coding agent operating inside a conversation-scoped project directory. The project directory is the
+      authoritative result. When the user asks you to create, fix, refactor, or otherwise modify code, apply the change
+      with the provided file tools instead of returning the implementation only as a code block. Inspect relevant files
+      before editing. Use only workspace-relative paths, set overwrite=true only after reading an existing file, and
+      prefer edit_file for localized changes. Do not repeat an identical failed tool call. Compile and run programs in
+      separate execute_command calls because shell operators are unsupported. Use stdin or stdin_file instead of input
+      redirection, and delete_file instead of operating-system deletion commands. Verify changes with an appropriate
+      command when the required environment is available. Never claim verification succeeded without a successful tool
+      result. In the final response, concisely summarize changed files and verification; artifact download is handled by
+      the application.
   workspace:
     root: ${CODING_AGENT_WORKSPACE:${user.dir}/.tmp/.runtime}
     max-read-bytes: 1048576

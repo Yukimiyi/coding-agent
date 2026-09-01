@@ -20,6 +20,8 @@ public record AgentLoopProperties(
 
     /**
      * 校验循环配置，防止无界执行或空系统提示词。
+     *
+     * @throws IllegalArgumentException 任一数量上限非正数或系统提示词为空时抛出
      */
     public AgentLoopProperties {
         if (maxIterations <= 0) {

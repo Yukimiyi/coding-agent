@@ -7,6 +7,7 @@ import com.yukina.codingagent.deepseek.DeepSeekToolCall;
 import com.yukina.codingagent.tool.ToolExecutionResult;
 import com.yukina.codingagent.tool.ToolExecutor;
 import com.yukina.codingagent.tool.ToolRegistry;
+import com.yukina.codingagent.tool.command.ExecutionEnvironmentProvider;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -24,11 +25,17 @@ public class AgentLoop {
             "You are a coding assistant in a conversation without an attached workspace. "
                     + "Answer from the conversation context. You cannot inspect, modify, or execute local files, "
                     + "so do not claim that you performed those actions.";
+    private static final Set<String> MUTATING_TOOLS = Set.of("write_file", "edit_file", "delete_file");
+    private static final String APPLY_CODE_CORRECTION =
+            "This is a CODE conversation, but you returned an implementation without changing the project. "
+                    + "Apply the requested code with the file tools, verify it when possible, and then summarize. "
+                    + "Do not return the implementation only as a code block.";
 
     private final DeepSeekClient deepSeekClient;
     private final ToolRegistry toolRegistry;
     private final ToolExecutor toolExecutor;
     private final AgentLoopProperties properties;
+    private final ExecutionEnvironmentProvider executionEnvironmentProvider;
 
     /**
      * 创建 Agent 循环服务。
@@ -37,17 +44,20 @@ public class AgentLoop {
      * @param toolRegistry 可提供给模型的工具注册表
      * @param toolExecutor 工具执行器
      * @param properties 循环边界配置
+     * @param executionEnvironmentProvider 当前宿主开发环境摘要提供者
      */
     public AgentLoop(
             DeepSeekClient deepSeekClient,
             ToolRegistry toolRegistry,
             ToolExecutor toolExecutor,
-            AgentLoopProperties properties
+            AgentLoopProperties properties,
+            ExecutionEnvironmentProvider executionEnvironmentProvider
     ) {
         this.deepSeekClient = deepSeekClient;
         this.toolRegistry = toolRegistry;
         this.toolExecutor = toolExecutor;
         this.properties = properties;
+        this.executionEnvironmentProvider = executionEnvironmentProvider;
     }
 
     /**
@@ -89,7 +99,15 @@ public class AgentLoop {
         return run(task, conversationHistory, observer, cancellation, true);
     }
 
-    /** 执行不附带工作空间的纯对话，不向模型提供任何本地工具。 */
+    /**
+     * 执行不附带工作空间的纯对话，不向模型提供任何本地工具。
+     *
+     * @param task 当前用户问题
+     * @param conversationHistory user 和 assistant 历史消息
+     * @param observer 公开执行阶段观察器
+     * @param cancellation 协作式取消信号
+     * @return 不包含工具调用的 Agent 执行结果
+     */
     public AgentRunResult runWithoutTools(
             String task,
             List<DeepSeekMessage> conversationHistory,
@@ -99,7 +117,17 @@ public class AgentLoop {
         return run(task, conversationHistory, observer, cancellation, false);
     }
 
-    /** 根据当前会话是否绑定工作空间执行统一的模型循环。 */
+    /**
+     * 根据当前会话是否绑定工作空间执行统一的模型循环。
+     *
+     * @param task 当前用户任务
+     * @param conversationHistory 已裁剪的对话历史
+     * @param observer 可为空的公开事件观察器
+     * @param cancellation 可为空的取消信号
+     * @param toolsEnabled 是否向模型提供工具和执行环境信息
+     * @return 最终回答、停止原因、轨迹和累计用量
+     * @throws IllegalArgumentException 任务为空或历史角色不受支持时抛出
+     */
     private AgentRunResult run(
             String task,
             List<DeepSeekMessage> conversationHistory,
@@ -115,20 +143,19 @@ public class AgentLoop {
         AgentRunCancellation safeCancellation = cancellation == null ? AgentRunCancellation.NONE : cancellation;
 
         List<DeepSeekMessage> messages = new ArrayList<>();
-        messages.add(DeepSeekMessage.system(
-                toolsEnabled ? properties.systemPrompt() : CHAT_ONLY_SYSTEM_PROMPT
-        ));
+        messages.add(DeepSeekMessage.system(systemPrompt(toolsEnabled)));
         messages.addAll(safeHistory);
         messages.add(DeepSeekMessage.user(task));
         List<AgentRunResult.ToolStep> toolSteps = new ArrayList<>();
         Set<ToolFailureSignature> failedToolCalls = new HashSet<>();
         UsageAccumulator usage = new UsageAccumulator();
         String model = null;
+        boolean applyCodeCorrectionIssued = false;
 
         for (int iteration = 1; iteration <= properties.maxIterations(); iteration++) {
             safeCancellation.throwIfCancellationRequested();
             safeObserver.onIterationStarted(iteration);
-            safeObserver.onThought(iteration, publicThoughtSummary(iteration, toolsEnabled, toolSteps));
+            safeObserver.onProgress(iteration, publicProgressSummary(iteration, toolsEnabled, toolSteps));
             DeepSeekChatResponse response;
             try {
                 int currentIteration = iteration;
@@ -179,6 +206,15 @@ public class AgentLoop {
             }
             if (toolCalls.isEmpty()) {
                 String answer = assistant.content();
+                if (toolsEnabled
+                        && !applyCodeCorrectionIssued
+                        && containsCodeBlock(answer)
+                        && !hasSuccessfulMutation(toolSteps)) {
+                    applyCodeCorrectionIssued = true;
+                    safeObserver.onAnswerReset(iteration);
+                    messages.add(DeepSeekMessage.user(APPLY_CODE_CORRECTION));
+                    continue;
+                }
                 boolean completed = answer != null && !answer.isBlank();
                 if (completed && finishReason != null && !"stop".equals(finishReason)) {
                     return result(
@@ -290,6 +326,11 @@ public class AgentLoop {
 
     /**
      * 将工具调用及结果转换为适合 API 返回的受限轨迹记录。
+     *
+     * @param iteration 工具发生的模型轮次
+     * @param toolCall 原始模型工具调用
+     * @param executionResult 归一化工具执行结果
+     * @return 参数和内容均按上限截断的工具轨迹
      */
     private AgentRunResult.ToolStep toToolStep(
             int iteration,
@@ -314,6 +355,9 @@ public class AgentLoop {
 
     /**
      * 按配置截断轨迹文本，避免响应体因大文件内容无限膨胀。
+     *
+     * @param value 原始参数或结果文本
+     * @return 文本值和截断标记
      */
     private TruncatedText truncate(String value) {
         if (value == null || value.length() <= properties.traceContentLimit()) {
@@ -324,6 +368,15 @@ public class AgentLoop {
 
     /**
      * 统一构造不可变的 Agent 执行结果。
+     *
+     * @param answer 最终或停止时已有回答
+     * @param model 实际响应模型
+     * @param iterations 已执行轮数
+     * @param completed 是否正常获得最终回答
+     * @param stopReason 停止原因
+     * @param toolSteps 工具轨迹
+     * @param usage 累计 Token 计数器
+     * @return 不可变 Agent 执行结果
      */
     private static AgentRunResult result(
             String answer,
@@ -345,14 +398,37 @@ public class AgentLoop {
         );
     }
 
-    /** 保存文本及其是否被截断。 */
+    /**
+     * 保存文本及其是否被截断。
+     *
+     * @param value 实际保留文本
+     * @param truncated 是否丢弃了后续文本
+     */
     private record TruncatedText(String value, boolean truncated) {
     }
 
     /**
-     * 根据公开运行状态生成可展示的进度摘要，不读取或转发模型隐藏思维链。
+     * 在工具会话中附加真实环境能力，避免模型反复调用不存在的编译器。
+     *
+     * @param toolsEnabled 是否启用工作空间工具
+     * @return 纯聊天或带环境摘要的系统提示词
      */
-    private static String publicThoughtSummary(
+    private String systemPrompt(boolean toolsEnabled) {
+        if (!toolsEnabled) {
+            return CHAT_ONLY_SYSTEM_PROMPT;
+        }
+        return properties.systemPrompt() + "\n\n" + executionEnvironmentProvider.agentSummary();
+    }
+
+    /**
+     * 根据公开运行状态生成可展示的进度摘要，不读取或转发模型隐藏思维链。
+     *
+     * @param iteration 当前一基轮次
+     * @param toolsEnabled 是否启用工具
+     * @param toolSteps 已完成工具轨迹
+     * @return 面向用户的简短进度摘要
+     */
+    private static String publicProgressSummary(
             int iteration,
             boolean toolsEnabled,
             List<AgentRunResult.ToolStep> toolSteps
@@ -370,7 +446,33 @@ public class AgentLoop {
         return previousStep.toolName() + " 执行失败，正在调整方案";
     }
 
-    /** 标识完全相同的确定性工具失败，防止模型无限重复调用。 */
+    /**
+     * 判断最终文本是否包含应当落盘的围栏代码块。
+     *
+     * @param answer 模型候选最终回答
+     * @return 包含 Markdown 围栏代码块时返回 {@code true}
+     */
+    private static boolean containsCodeBlock(String answer) {
+        return answer != null && answer.contains("```");
+    }
+
+    /**
+     * 判断本轮是否已经通过文件工具产生过成功变更。
+     *
+     * @param toolSteps 已完成工具轨迹
+     * @return 至少一个写、改或删工具成功时返回 {@code true}
+     */
+    private static boolean hasSuccessfulMutation(List<AgentRunResult.ToolStep> toolSteps) {
+        return toolSteps.stream().anyMatch(step -> step.success() && MUTATING_TOOLS.contains(step.toolName()));
+    }
+
+    /**
+     * 标识完全相同的确定性工具失败，防止模型无限重复调用。
+     *
+     * @param toolName 工具名称
+     * @param arguments 已截断参数
+     * @param errorCode 稳定错误码
+     */
     private record ToolFailureSignature(String toolName, String arguments, String errorCode) {
     }
 
@@ -380,7 +482,11 @@ public class AgentLoop {
         private long completionTokens;
         private long totalTokens;
 
-        /** 累加单次模型响应的用量。 */
+        /**
+         * 累加单次模型响应的用量。
+         *
+         * @param usage 单次响应 Token 用量；为 {@code null} 时忽略
+         */
         void add(DeepSeekChatResponse.Usage usage) {
             if (usage == null) {
                 return;
@@ -390,7 +496,7 @@ public class AgentLoop {
             totalTokens += usage.totalTokens();
         }
 
-        /** 返回当前累计值的不可变快照。 */
+        /** @return 当前累计 Token 用量的不可变快照 */
         AgentRunResult.Usage snapshot() {
             return new AgentRunResult.Usage(promptTokens, completionTokens, totalTokens);
         }

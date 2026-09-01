@@ -26,6 +26,9 @@ public class DeepSeekClient {
 
     /**
      * 创建 DeepSeek 客户端并按配置初始化连接超时。
+     *
+     * @param properties DeepSeek 地址、模型、密钥和重试配置
+     * @param objectMapper 请求与响应 JSON 转换器
      */
     public DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper) {
         this.properties = properties;
@@ -37,6 +40,9 @@ public class DeepSeekClient {
 
     /**
      * 发起不携带工具定义的普通对话请求。
+     *
+     * @param messages 完整对话消息
+     * @return DeepSeek 非流式响应
      */
     public DeepSeekChatResponse chat(List<DeepSeekMessage> messages) {
         return chat(messages, List.of());
@@ -48,6 +54,8 @@ public class DeepSeekClient {
      * @param messages 完整对话消息
      * @param tools 可供模型调用的工具定义
      * @return DeepSeek 响应
+     * @throws IllegalArgumentException 消息为空时抛出
+     * @throws DeepSeekApiException 配置、网络、HTTP 或响应解析失败时抛出
      */
     public DeepSeekChatResponse chat(
             List<DeepSeekMessage> messages,
@@ -112,6 +120,8 @@ public class DeepSeekClient {
      * @param tools 可供模型调用的工具定义
      * @param observer 公开回答增量观察器
      * @return 聚合后的完整 DeepSeek 响应
+     * @throws IllegalArgumentException 消息为空时抛出
+     * @throws DeepSeekApiException 配置、网络、HTTP 或流解析失败时抛出
      */
     public DeepSeekChatResponse chatStream(
             List<DeepSeekMessage> messages,
@@ -174,14 +184,25 @@ public class DeepSeekClient {
         }
     }
 
-    /** 仅对限流和典型瞬时服务错误执行有限重试。 */
+    /**
+     * 仅对限流和典型瞬时服务错误执行有限重试。
+     *
+     * @param statusCode HTTP 状态码
+     * @param attempt 从零开始的当前尝试序号
+     * @return 未超过配置次数且状态可重试时返回 {@code true}
+     */
     private boolean shouldRetry(int statusCode, int attempt) {
         return attempt < properties.maxRetries()
                 && (statusCode == 429 || statusCode == 500 || statusCode == 502
                 || statusCode == 503 || statusCode == 504);
     }
 
-    /** 使用有上限的指数退避等待下一次请求。 */
+    /**
+     * 使用有上限的指数退避等待下一次请求。
+     *
+     * @param attempt 从零开始的当前尝试序号
+     * @throws DeepSeekApiException 等待期间线程被中断时抛出
+     */
     private void awaitRetry(int attempt) {
         long multiplier = 1L << Math.min(attempt, 4);
         long delayMillis = Math.min(
@@ -196,7 +217,14 @@ public class DeepSeekClient {
         }
     }
 
-    /** 解析一行标准 SSE 数据并交给响应聚合器。 */
+    /**
+     * 解析一行标准 SSE 数据并交给响应聚合器。
+     *
+     * @param line HTTP 行流中的单行文本
+     * @param accumulator 当前响应聚合器
+     * @param observer 公开回答增量观察器
+     * @throws DeepSeekApiException data JSON 无法解析时抛出
+     */
     private void acceptStreamLine(
             String line,
             StreamAccumulator accumulator,
@@ -218,6 +246,10 @@ public class DeepSeekClient {
 
     /**
      * 将请求对象序列化为 DeepSeek 所需的 JSON。
+     *
+     * @param request Chat Completions 请求对象
+     * @return 请求 JSON 字符串
+     * @throws DeepSeekApiException 序列化失败时抛出
      */
     private String toJson(DeepSeekChatRequest request) {
         try {
@@ -238,7 +270,12 @@ public class DeepSeekClient {
         private DeepSeekChatResponse.Usage usage;
         private boolean receivedChoice;
 
-        /** 合并单个模型增量，并仅推送公开回答文本。 */
+        /**
+         * 合并单个模型增量，并仅推送公开回答文本。
+         *
+         * @param chunk 单个 SSE 数据块
+         * @param observer 公开回答增量观察器
+         */
         private void accept(DeepSeekChatChunk chunk, DeepSeekStreamObserver observer) {
             if (chunk == null) {
                 return;
@@ -278,7 +315,11 @@ public class DeepSeekClient {
             }
         }
 
-        /** 按工具调用索引拼接跨数据块的 ID、名称与参数。 */
+        /**
+         * 按工具调用索引拼接跨数据块的 ID、名称与参数。
+         *
+         * @param deltas 当前数据块中的工具调用增量
+         */
         private void mergeToolCalls(List<DeepSeekChatChunk.ToolCallDelta> deltas) {
             if (deltas == null) {
                 return;
@@ -293,7 +334,12 @@ public class DeepSeekClient {
             }
         }
 
-        /** 将已聚合数据转换为现有非流式响应结构。 */
+        /**
+         * 将已聚合数据转换为现有非流式响应结构。
+         *
+         * @return 可供 AgentLoop 统一处理的完整响应
+         * @throws DeepSeekApiException 数据流未包含任何候选项时抛出
+         */
         private DeepSeekChatResponse result() {
             if (!receivedChoice) {
                 throw new DeepSeekApiException("DeepSeek API returned no choices", null);
@@ -315,7 +361,12 @@ public class DeepSeekClient {
             );
         }
 
-        /** 将空缓冲区转换为协议中的 null。 */
+        /**
+         * 将空缓冲区转换为协议中的 null。
+         *
+         * @param value 文本聚合缓冲区
+         * @return 完整文本；缓冲区为空时返回 {@code null}
+         */
         private static String emptyToNull(StringBuilder value) {
             return value.isEmpty() ? null : value.toString();
         }
@@ -328,7 +379,11 @@ public class DeepSeekClient {
         private final StringBuilder name = new StringBuilder();
         private final StringBuilder arguments = new StringBuilder();
 
-        /** 合并单个工具调用增量。 */
+        /**
+         * 合并单个工具调用增量。
+         *
+         * @param delta 当前工具调用增量
+         */
         private void accept(DeepSeekChatChunk.ToolCallDelta delta) {
             append(id, delta.id());
             append(type, delta.type());
@@ -338,7 +393,7 @@ public class DeepSeekClient {
             }
         }
 
-        /** 生成完整工具调用。 */
+        /** @return 拼接完成的函数工具调用 */
         private DeepSeekToolCall result() {
             return new DeepSeekToolCall(
                     id.toString(),
@@ -347,7 +402,12 @@ public class DeepSeekClient {
             );
         }
 
-        /** 忽略空片段并拼接有效字符串。 */
+        /**
+         * 忽略空片段并拼接有效字符串。
+         *
+         * @param target 目标字符串缓冲区
+         * @param value 可空增量文本
+         */
         private static void append(StringBuilder target, String value) {
             if (value != null) {
                 target.append(value);

@@ -5,7 +5,11 @@ package com.yukina.codingagent.deepseek;
  */
 public class DeepSeekConfigurationException extends RuntimeException {
 
-    /** 创建配置异常。 */
+    /**
+     * 创建配置异常。
+     *
+     * @param message 缺失或无效配置说明
+     */
     public DeepSeekConfigurationException(String message) {
         super(message);
     }

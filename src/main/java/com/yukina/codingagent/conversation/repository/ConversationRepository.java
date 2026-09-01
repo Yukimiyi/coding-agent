@@ -2,6 +2,7 @@ package com.yukina.codingagent.conversation.repository;
 
 import com.yukina.codingagent.conversation.model.Conversation;
 import com.yukina.codingagent.conversation.model.ConversationMessage;
+import com.yukina.codingagent.conversation.model.ConversationMode;
 import com.yukina.codingagent.conversation.model.MessagePage;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -26,71 +27,86 @@ public class ConversationRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
-    /** 创建会话仓储。 */
+    /**
+     * 创建会话仓储。
+     *
+     * @param jdbcTemplate 数据库访问模板
+     */
     public ConversationRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    /** 插入并返回新会话。 */
-    public Conversation create(String id, String title, String workspaceId, Instant now) {
+    /**
+     * 插入并返回新会话。
+     *
+     * @param id 会话 ID
+     * @param title 规范化标题
+     * @param mode 会话模式
+     * @param now 创建及更新时间
+     * @return 与插入记录一致的会话
+     */
+    public Conversation create(String id, String title, ConversationMode mode, Instant now) {
         jdbcTemplate.update(
-                "INSERT INTO conversations(id, title, workspace_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                 id,
                 title,
-                workspaceId,
+                mode.name(),
                 Timestamp.from(now),
                 Timestamp.from(now)
         );
-        return new Conversation(id, title, workspaceId, now, now);
+        return new Conversation(id, title, mode, now, now);
     }
 
-    /** 插入用于旧单元测试或迁移场景的未绑定会话。 */
+    /**
+     * 插入用于旧单元测试或迁移场景的未绑定会话。
+     *
+     * @param id 会话 ID
+     * @param title 规范化标题
+     * @param now 创建及更新时间
+     * @return 新建纯聊天会话
+     */
     public Conversation create(String id, String title, Instant now) {
-        return create(id, title, null, now);
+        return create(id, title, ConversationMode.CHAT, now);
     }
 
-    /** 按 ID 查询会话。 */
+    /**
+     * 按 ID 查询会话。
+     *
+     * @param id 会话 ID
+     * @return 包含匹配会话的 Optional，不存在时为空
+     */
     public Optional<Conversation> findById(String id) {
         List<Conversation> conversations = jdbcTemplate.query(
-                "SELECT id, title, workspace_id, created_at, updated_at FROM conversations WHERE id = ?",
+                "SELECT id, title, mode, created_at, updated_at FROM conversations WHERE id = ?",
                 this::mapConversation,
                 id
         );
         return conversations.stream().findFirst();
     }
 
-    /** 按最近活动时间倒序查询会话。 */
+    /**
+     * 按最近活动时间倒序查询会话。
+     *
+     * @param limit 最大返回数量
+     * @return 最近活动会话列表
+     */
     public List<Conversation> listRecent(int limit) {
         return jdbcTemplate.query(
-                "SELECT id, title, workspace_id, created_at, updated_at "
+                "SELECT id, title, mode, created_at, updated_at "
                         + "FROM conversations ORDER BY updated_at DESC, id DESC LIMIT ?",
                 this::mapConversation,
                 limit
         );
     }
 
-    /** 按工作空间过滤并按最近活动时间倒序查询会话。 */
-    public List<Conversation> listRecent(String workspaceId, int limit) {
-        return jdbcTemplate.query(
-                "SELECT id, title, workspace_id, created_at, updated_at FROM conversations "
-                        + "WHERE workspace_id = ? ORDER BY updated_at DESC, id DESC LIMIT ?",
-                this::mapConversation,
-                workspaceId,
-                limit
-        );
-    }
-
-    /** 按最近活动时间列出未绑定工作空间的纯对话。 */
-    public List<Conversation> listRecentWithoutWorkspace(int limit) {
-        return jdbcTemplate.query(
-                "SELECT id, title, workspace_id, created_at, updated_at FROM conversations "
-                        + "WHERE workspace_id IS NULL ORDER BY updated_at DESC, id DESC LIMIT ?",
-                this::mapConversation,
-                limit
-        );
-    }
-
-    /** 更新会话标题和最近活动时间。 */
+    /**
+     * 更新会话标题和最近活动时间。
+     *
+     * @param id 会话 ID
+     * @param title 新标题
+     * @param now 更新时间
+     * @return 有记录被更新时返回 {@code true}
+     */
     public boolean updateTitle(String id, String title, Instant now) {
         return jdbcTemplate.update(
                 "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
@@ -100,7 +116,12 @@ public class ConversationRepository {
         ) > 0;
     }
 
-    /** 更新会话最近活动时间。 */
+    /**
+     * 更新会话最近活动时间。
+     *
+     * @param id 会话 ID
+     * @param now 更新时间
+     */
     public void touch(String id, Instant now) {
         jdbcTemplate.update(
                 "UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -109,13 +130,26 @@ public class ConversationRepository {
         );
     }
 
-    /** 删除会话；关联消息由数据库外键级联删除。 */
+    /**
+     * 删除会话；关联消息由数据库外键级联删除。
+     *
+     * @param id 会话 ID
+     * @return 有记录被删除时返回 {@code true}
+     */
     public boolean delete(String id) {
         return jdbcTemplate.update("DELETE FROM conversations WHERE id = ?", id) > 0;
     }
 
     /**
      * 追加消息并返回数据库生成的稳定消息 ID。
+     *
+     * @param conversationId 会话 ID
+     * @param role 用户或助手角色
+     * @param content 消息文本
+     * @param status PENDING、SUCCESS 或 ERROR 状态
+     * @param now 创建时间
+     * @return 包含数据库生成 ID 的消息
+     * @throws IllegalStateException 数据库未返回生成键时抛出
      */
     public ConversationMessage appendMessage(
             String conversationId,
@@ -145,7 +179,14 @@ public class ConversationRepository {
         return new ConversationMessage(key.longValue(), conversationId, role, content, status, now);
     }
 
-    /** 更新一条消息的执行状态。 */
+    /**
+     * 更新一条消息的执行状态。
+     *
+     * @param conversationId 会话 ID
+     * @param messageId 消息 ID
+     * @param status 新状态
+     * @return 有记录被更新时返回 {@code true}
+     */
     public boolean updateMessageStatus(
             String conversationId,
             long messageId,
@@ -161,6 +202,10 @@ public class ConversationRepository {
 
     /**
      * 查询最近成功消息，并转换为模型需要的时间正序。
+     *
+     * @param conversationId 会话 ID
+     * @param limit 最大返回数量
+     * @return 最近成功消息的时间正序列表
      */
     public List<ConversationMessage> findRecentSuccessfulMessages(String conversationId, int limit) {
         List<ConversationMessage> messages = jdbcTemplate.query(
@@ -178,6 +223,11 @@ public class ConversationRepository {
 
     /**
      * 查询指定 ID 之前的消息；额外读取一条用于判断是否存在下一页。
+     *
+     * @param conversationId 会话 ID
+     * @param beforeId 可选上页最小消息 ID
+     * @param limit 页面大小
+     * @return 消息页、下一游标及是否还有更早消息
      */
     public MessagePage findMessagesBefore(String conversationId, Long beforeId, int limit) {
         int queryLimit = limit + 1;
@@ -212,7 +262,14 @@ public class ConversationRepository {
         return new MessagePage(visible, nextCursor, hasMore);
     }
 
-    /** 将 JDBC 行映射为会话消息。 */
+    /**
+     * 将 JDBC 行映射为会话消息。
+     *
+     * @param resultSet 当前结果集行
+     * @param rowNumber 当前行号，映射逻辑无需使用
+     * @return 映射得到的会话消息
+     * @throws java.sql.SQLException 读取数据库列失败时抛出
+     */
     private ConversationMessage mapMessage(java.sql.ResultSet resultSet, int rowNumber) throws java.sql.SQLException {
         return new ConversationMessage(
                 resultSet.getLong("id"),
@@ -224,12 +281,19 @@ public class ConversationRepository {
         );
     }
 
-    /** 将 JDBC 行映射为会话元数据。 */
+    /**
+     * 将 JDBC 行映射为会话元数据。
+     *
+     * @param resultSet 当前结果集行
+     * @param rowNumber 当前行号，映射逻辑无需使用
+     * @return 映射得到的会话
+     * @throws java.sql.SQLException 读取数据库列失败时抛出
+     */
     private Conversation mapConversation(java.sql.ResultSet resultSet, int rowNumber) throws java.sql.SQLException {
         return new Conversation(
                 resultSet.getString("id"),
                 resultSet.getString("title"),
-                resultSet.getString("workspace_id"),
+                ConversationMode.valueOf(resultSet.getString("mode")),
                 resultSet.getTimestamp("created_at").toInstant(),
                 resultSet.getTimestamp("updated_at").toInstant()
         );

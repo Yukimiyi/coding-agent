@@ -1,6 +1,7 @@
 package com.yukina.codingagent.agent.run;
 
 import com.yukina.codingagent.agent.AgentRunResult;
+import com.yukina.codingagent.conversation.model.ConversationMode;
 import com.yukina.codingagent.conversation.repository.ConversationRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,7 +57,7 @@ class AgentRunHistoryRepositoryTest {
                 "run-1",
                 "request-1",
                 "conversation-1",
-                null,
+                ConversationMode.CHAT,
                 false,
                 AgentRunStatus.COMPLETED,
                 now,

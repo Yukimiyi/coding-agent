@@ -18,6 +18,11 @@ public class ConversationLockManager {
 
     /**
      * 在会话专属锁内执行操作，并在无等待者时回收锁对象。
+     *
+     * @param conversationId 用于隔离锁的会话 ID
+     * @param action 获得锁后执行的任务
+     * @param <T> 任务返回值类型
+     * @return 任务执行结果
      */
     public <T> T withLock(String conversationId, Supplier<T> action) {
         ReentrantLock lock = locks.computeIfAbsent(conversationId, id -> new ReentrantLock());
@@ -34,6 +39,12 @@ public class ConversationLockManager {
 
     /**
      * 可中断地等待会话锁，使排队中的异步任务能够响应取消请求。
+     *
+     * @param conversationId 用于隔离锁的会话 ID
+     * @param action 获得锁后执行的任务
+     * @param <T> 任务返回值类型
+     * @return 任务执行结果
+     * @throws AgentRunCancelledException 等待锁时线程被中断时抛出
      */
     public <T> T withInterruptibleLock(String conversationId, Supplier<T> action) {
         ReentrantLock lock = locks.computeIfAbsent(conversationId, id -> new ReentrantLock());

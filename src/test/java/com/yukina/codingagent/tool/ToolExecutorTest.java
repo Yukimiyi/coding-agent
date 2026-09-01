@@ -81,6 +81,26 @@ class ToolExecutorTest {
         assertEquals("Path is outside workspace", result.error().message());
     }
 
+    /** 验证工具错误的恢复字段同时进入结构化对象和模型可见 JSON。 */
+    @Test
+    void preservesToolErrorRecoveryDetails() throws Exception {
+        ToolExecutor executor = executor(arguments -> {
+            throw new ToolExecutionException(
+                    "COMMAND_NOT_FOUND",
+                    "Executable was not found: g++",
+                    Map.of("executable", "g++", "recoverable", true, "installHint", "Install G++")
+            );
+        });
+
+        ToolExecutionResult result = executor.execute(call("echo", "{}"));
+        JsonNode content = objectMapper.readTree(result.content()).path("error");
+
+        assertEquals("g++", result.error().details().get("executable"));
+        assertEquals("g++", content.path("executable").asText());
+        assertTrue(content.path("recoverable").asBoolean());
+        assertEquals("Install G++", content.path("installHint").asText());
+    }
+
     /** 验证批量工具调用保持协议顺序。 */
     @Test
     void executesMultipleCallsInProtocolOrder() {

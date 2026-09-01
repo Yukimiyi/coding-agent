@@ -6,9 +6,8 @@ package com.yukina.codingagent.agent.run;
 public enum AgentRunEventType {
     QUEUED,
     RUNNING,
-    PERCEPTION,
     ITERATION_STARTED,
-    THOUGHT,
+    PROGRESS,
     ANSWER_DELTA,
     ANSWER_RESET,
     MODEL_RESPONSE,
