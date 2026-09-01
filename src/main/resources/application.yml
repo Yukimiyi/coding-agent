@@ -105,6 +105,15 @@ agent:
       command when the required environment is available. Never claim verification succeeded without a successful tool
       result. In the final response, concisely summarize changed files and verification; artifact download is handled by
       the application.
+  reflection:
+    max-rounds: 1
+    max-context-chars: 24000
+    system-prompt: >
+      You are the final reviewer in a ReAct coding agent. Review only the supplied original task, candidate answer,
+      successful file changes, tool failures, and verification evidence. You have no tools and must not invent file
+      contents or test results. Return exactly one JSON object with verdict, summary, and issues. verdict must be PASS
+      or REVISE. Use PASS when the available evidence supports completion and no concrete actionable defect is visible.
+      Use REVISE only for a specific issue that the coding agent can correct. Keep summary concise and issues actionable.
   workspace:
     root: ${CODING_AGENT_WORKSPACE:${user.dir}/.tmp/.runtime}
     max-read-bytes: 1048576

@@ -14,6 +14,7 @@ import {
   MessageSquareText,
   PanelRight,
   Send,
+  ShieldCheck,
   Square,
   SquareTerminal,
   User,
@@ -162,6 +163,11 @@ function runLabel(status, iteration, toolName) {
                 <div v-if="activity.type === 'progress'" class="process-note progress">
                   <BrainCircuit :size="15" />
                   <span class="process-kind">执行进度</span>
+                  <span class="process-summary">{{ activity.message }}</span>
+                </div>
+                <div v-else-if="activity.type === 'reflection'" class="process-note reflection" :class="activity.state">
+                  <ShieldCheck :size="15" />
+                  <span class="process-kind">反思</span>
                   <span class="process-summary">{{ activity.message }}</span>
                 </div>
                 <details v-else class="process-tool">

@@ -355,6 +355,10 @@ function handleRunEvent(event) {
   if (event.type === 'ITERATION_STARTED') currentToolName.value = ''
   else if (event.type === 'PROGRESS') {
     appendRunActivity({ id: event.sequence, type: event.type.toLowerCase(), message: event.message || '', iteration: event.iteration })
+  } else if (event.type === 'REFLECTION_STARTED') {
+    upsertRunActivity({ id: `reflection-${event.iteration}`, type: 'reflection', state: 'running', message: event.message || '正在审查当前实现', iteration: event.iteration })
+  } else if (event.type === 'REFLECTION_COMPLETED') {
+    upsertRunActivity({ id: `reflection-${event.iteration}`, type: 'reflection', state: 'completed', message: event.message || '反思审查完成', iteration: event.iteration })
   } else if (event.type === 'ANSWER_DELTA') streamedAnswer.value += event.message || ''
   else if (event.type === 'ANSWER_RESET') streamedAnswer.value = ''
   else if (event.type === 'TOOL_STARTED') {
@@ -370,6 +374,13 @@ function handleRunEvent(event) {
 
 function appendRunActivity(activity) {
   runActivities.value.push({ ...activity, id: activity.id || `${activity.type}-${runActivities.value.length + 1}` })
+}
+
+/** @param {object} activity 使用稳定 ID 新增或更新一条运行活动。 */
+function upsertRunActivity(activity) {
+  const index = runActivities.value.findIndex((item) => item.id === activity.id)
+  if (index === -1) appendRunActivity(activity)
+  else runActivities.value[index] = { ...runActivities.value[index], ...activity }
 }
 function resetLiveRunOutput() {
   runActivities.value = []

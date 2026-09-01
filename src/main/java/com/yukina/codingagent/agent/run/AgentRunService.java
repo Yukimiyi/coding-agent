@@ -3,6 +3,7 @@ package com.yukina.codingagent.agent.run;
 import com.yukina.codingagent.agent.AgentLoopObserver;
 import com.yukina.codingagent.agent.AgentRunCancelledException;
 import com.yukina.codingagent.agent.AgentRunResult;
+import com.yukina.codingagent.agent.reflection.ReflectionFeedback;
 import com.yukina.codingagent.conversation.model.ConversationChatResult;
 import com.yukina.codingagent.conversation.model.ConversationMode;
 import com.yukina.codingagent.conversation.service.ConversationAgentService;
@@ -376,6 +377,40 @@ public class AgentRunService {
                         null,
                         null,
                         null,
+                        null
+                );
+            }
+
+            @Override
+            public void onReflectionStarted(int iteration) {
+                publish(
+                        state,
+                        AgentRunEventType.REFLECTION_STARTED,
+                        iteration,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "正在审查当前实现与验证证据",
+                        null
+                );
+            }
+
+            @Override
+            public void onReflectionCompleted(int iteration, ReflectionFeedback feedback) {
+                publish(
+                        state,
+                        AgentRunEventType.REFLECTION_COMPLETED,
+                        iteration,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        feedback.publicSummary(),
                         null
                 );
             }

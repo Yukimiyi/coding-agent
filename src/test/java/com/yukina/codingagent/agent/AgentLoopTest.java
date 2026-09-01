@@ -1,5 +1,9 @@
 package com.yukina.codingagent.agent;
 
+import com.yukina.codingagent.agent.reflection.ReflectionFeedback;
+import com.yukina.codingagent.agent.reflection.ReflectionProperties;
+import com.yukina.codingagent.agent.reflection.ReflectionReview;
+import com.yukina.codingagent.agent.reflection.ReflectionReviewer;
 import com.yukina.codingagent.deepseek.DeepSeekChatResponse;
 import com.yukina.codingagent.deepseek.DeepSeekClient;
 import com.yukina.codingagent.deepseek.DeepSeekMessage;
@@ -24,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -304,8 +309,110 @@ class AgentLoopTest {
         assertTrue(messages.getValue().getFirst().content().contains("Available: java"));
     }
 
+    /** 验证文件修改后的候选回答通过反思时可直接结束，并累计审查用量。 */
+    @Test
+    void completesWhenReflectionPasses() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        ReflectionReviewer reviewer = mock(ReflectionReviewer.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(toolMessage(call(
+                        "write_file",
+                        "call-write",
+                        "{\"path\":\"Main.java\",\"content\":\"class Main {}\"}"
+                )), "tool_calls", 2),
+                response(DeepSeekMessage.assistant("Created Main.java.", null, null), "stop", 3)
+        );
+        when(reviewer.review(anyString(), anyString(), anyList())).thenReturn(new ReflectionReview(
+                new ReflectionFeedback(ReflectionFeedback.Verdict.PASS, "实现与现有证据一致", List.of()),
+                new DeepSeekChatResponse.Usage(3, 1, 4)
+        ));
+
+        AgentRunResult result = loop(client, reviewer, 4, 4).run("Create Main.java");
+
+        assertTrue(result.completed());
+        assertEquals("Created Main.java.", result.answer());
+        assertEquals(9, result.usage().totalTokens());
+        verify(reviewer).review(anyString(), anyString(), anyList());
+        verify(client, times(2)).chatStream(anyList(), anyList(), any());
+    }
+
+    /** 验证 REVISE 反馈会作为新任务回到 ReAct，而不会成为公开思维链。 */
+    @Test
+    void resumesReactLoopWhenReflectionRequestsRevision() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        ReflectionReviewer reviewer = mock(ReflectionReviewer.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(toolMessage(call(
+                        "write_file",
+                        "call-write",
+                        "{\"path\":\"Main.java\",\"content\":\"class Main {}\"}"
+                )), "tool_calls", 2),
+                response(DeepSeekMessage.assistant("Initial result.", null, null), "stop", 2),
+                response(DeepSeekMessage.assistant("Corrected and verified result.", null, null), "stop", 2)
+        );
+        when(reviewer.review(anyString(), anyString(), anyList())).thenReturn(new ReflectionReview(
+                new ReflectionFeedback(
+                        ReflectionFeedback.Verdict.REVISE,
+                        "缺少必要验证",
+                        List.of("运行项目测试并依据真实结果总结")
+                ),
+                new DeepSeekChatResponse.Usage(2, 1, 3)
+        ));
+
+        AgentRunResult result = loop(client, reviewer, 5, 4).run("Create and verify Main.java");
+
+        assertTrue(result.completed());
+        assertEquals("Corrected and verified result.", result.answer());
+        assertEquals(3, result.iterations());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DeepSeekMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(client, times(3)).chatStream(messages.capture(), anyList(), any());
+        DeepSeekMessage feedbackMessage = messages.getAllValues().get(2).getLast();
+        assertEquals("user", feedbackMessage.role());
+        assertTrue(feedbackMessage.content().contains("缺少必要验证"));
+        assertTrue(feedbackMessage.content().contains("运行项目测试"));
+    }
+
+    /** 验证纯聊天即使有候选回答也不会触发 Reflection。 */
+    @Test
+    void doesNotReflectInChatOnlyMode() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        ReflectionReviewer reviewer = mock(ReflectionReviewer.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(DeepSeekMessage.assistant("Chat answer.", null, null), "stop", 2)
+        );
+
+        AgentRunResult result = loop(client, reviewer, 4, 4).runWithoutTools(
+                "Discuss an approach",
+                List.of(),
+                AgentLoopObserver.NONE,
+                AgentRunCancellation.NONE
+        );
+
+        assertTrue(result.completed());
+        verifyNoInteractions(reviewer);
+    }
+
     /** 使用测试边界配置创建 Agent 循环。 */
     private AgentLoop loop(DeepSeekClient client, int maxIterations, int maxToolCalls) {
+        return loop(client, mock(ReflectionReviewer.class), maxIterations, maxToolCalls);
+    }
+
+    /**
+     * 使用指定反思审查器和测试边界创建 Agent 循环。
+     *
+     * @param client 模拟模型客户端
+     * @param reviewer 模拟反思审查器
+     * @param maxIterations 最大 ReAct 轮数
+     * @param maxToolCalls 单轮最大工具调用数
+     * @return 可执行 echo 与 write_file 的测试 AgentLoop
+     */
+    private AgentLoop loop(
+            DeepSeekClient client,
+            ReflectionReviewer reviewer,
+            int maxIterations,
+            int maxToolCalls
+    ) {
         AgentTool echo = new AgentTool() {
             /** {@inheritDoc} */
             @Override
@@ -323,7 +430,27 @@ class AgentLoopTest {
                 return objectMapper.writeValueAsString(Map.of("echo", arguments.path("text").asText()));
             }
         };
-        ToolRegistry registry = new ToolRegistry(List.of(echo));
+        AgentTool writeFile = new AgentTool() {
+            /** {@inheritDoc} */
+            @Override
+            public DeepSeekToolDefinition definition() {
+                return DeepSeekToolDefinition.function(
+                        "write_file",
+                        "Write a test file",
+                        Map.of("type", "object", "properties", Map.of())
+                );
+            }
+
+            /** {@inheritDoc} */
+            @Override
+            public String execute(JsonNode arguments) throws Exception {
+                return objectMapper.writeValueAsString(Map.of(
+                        "path", arguments.path("path").asText(),
+                        "written", true
+                ));
+            }
+        };
+        ToolRegistry registry = new ToolRegistry(List.of(echo, writeFile));
         ToolExecutor executor = new ToolExecutor(registry, objectMapper);
         AgentLoopProperties properties = new AgentLoopProperties(
                 maxIterations,
@@ -336,7 +463,9 @@ class AgentLoopTest {
                 registry,
                 executor,
                 properties,
-                () -> "Detected execution environment. Available: java. Unavailable: none."
+                () -> "Detected execution environment. Available: java. Unavailable: none.",
+                reviewer,
+                new ReflectionProperties(1, 10000, "Return PASS or REVISE JSON.")
         );
     }
 

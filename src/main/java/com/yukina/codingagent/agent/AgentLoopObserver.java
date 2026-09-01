@@ -1,5 +1,7 @@
 package com.yukina.codingagent.agent;
 
+import com.yukina.codingagent.agent.reflection.ReflectionFeedback;
+
 /**
  * 观察 AgentLoop 的公开执行阶段，用于记录状态或实时推送事件。
  */
@@ -52,6 +54,23 @@ public interface AgentLoopObserver {
      * @param toolCallCount 本轮工具调用数量
      */
     default void onModelResponse(int iteration, String model, int toolCallCount) {
+    }
+
+    /**
+     * 在候选最终回答进入无工具反思审查前触发。
+     *
+     * @param iteration 产生候选回答的一基模型轮次
+     */
+    default void onReflectionStarted(int iteration) {
+    }
+
+    /**
+     * 在反思审查得到结构化 PASS 或 REVISE 后触发。
+     *
+     * @param iteration 产生候选回答的一基模型轮次
+     * @param feedback 可安全展示的结构化结论
+     */
+    default void onReflectionCompleted(int iteration, ReflectionFeedback feedback) {
     }
 
     /**

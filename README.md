@@ -1,10 +1,11 @@
 # Coding Agent
 
-A local Spring Boot and Vue coding agent powered by DeepSeek tool calls. The project focuses on a transparent Agent Loop: perceive the task, reason about the next step, call a tool, observe the result, and stop with a verified answer.
+A local Spring Boot and Vue coding agent powered by DeepSeek tool calls. The project focuses on a transparent ReAct + Reflection loop: perceive the task, reason about the next step, call a tool, observe the result, review the candidate result once, and stop with a verified answer.
 
 ## Core Design
 
 - `AgentLoop` controls up to 16 model iterations, tool-call parsing, observations, termination, cancellation, retries, and usage accounting.
+- `ReflectionReviewer` performs at most one tool-free final review after a real file change. `PASS` completes the run; `REVISE` returns actionable feedback to the ReAct loop while enough iterations remain.
 - `ToolRegistry` exposes structured tool definitions; `ToolExecutor` validates calls and converts failures into model-readable observations.
 - File tools read, search, create, edit, and delete project files inside a bounded directory.
 - `execute_command` runs allowlisted commands without a shell and supports inline `stdin` or a project-relative `stdin_file`.
@@ -42,7 +43,9 @@ The download endpoint archives only `workspace/`. Internal data, upload staging,
 4. `POST /api/agent/runs/{runId}/cancel` cancels a queued or running task.
 5. `GET /api/agent/runs/active?conversationId=...` recovers the active run after page refresh.
 
-The public ReAct cycle uses `PROGRESS`, `TOOL_STARTED`, `TOOL_COMPLETED`, and `ANSWER_DELTA` events. `PROGRESS` is generated from public execution state rather than private chain-of-thought. Tool arguments and observations remain structured and visually distinct in the client.
+The public ReAct cycle uses `PROGRESS`, `TOOL_STARTED`, `TOOL_COMPLETED`, and `ANSWER_DELTA` events. Final review adds `REFLECTION_STARTED` and `REFLECTION_COMPLETED`. `PROGRESS` and reflection summaries are generated from public execution evidence rather than private chain-of-thought. Tool arguments and observations remain structured and visually distinct in the client.
+
+Reflection is intentionally narrow in the first version. It runs only for a CODE conversation that has successfully called `write_file`, `edit_file`, or `delete_file`, and only when the model is about to return a non-empty final answer. The reviewer receives the original task, candidate answer, changed paths, tool failures, and command-verification evidence. It receives no tools, runs at most once, and reserves two ReAct iterations for a possible correction and new final answer.
 
 Example CODE run:
 

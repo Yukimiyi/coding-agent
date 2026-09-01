@@ -1,5 +1,9 @@
 package com.yukina.codingagent.agent;
 
+import com.yukina.codingagent.agent.reflection.ReflectionFeedback;
+import com.yukina.codingagent.agent.reflection.ReflectionProperties;
+import com.yukina.codingagent.agent.reflection.ReflectionReview;
+import com.yukina.codingagent.agent.reflection.ReflectionReviewer;
 import com.yukina.codingagent.deepseek.DeepSeekChatResponse;
 import com.yukina.codingagent.deepseek.DeepSeekClient;
 import com.yukina.codingagent.deepseek.DeepSeekMessage;
@@ -36,6 +40,8 @@ public class AgentLoop {
     private final ToolExecutor toolExecutor;
     private final AgentLoopProperties properties;
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
+    private final ReflectionReviewer reflectionReviewer;
+    private final ReflectionProperties reflectionProperties;
 
     /**
      * 创建 Agent 循环服务。
@@ -45,19 +51,25 @@ public class AgentLoop {
      * @param toolExecutor 工具执行器
      * @param properties 循环边界配置
      * @param executionEnvironmentProvider 当前宿主开发环境摘要提供者
+     * @param reflectionReviewer 候选最终回答的无工具审查器
+     * @param reflectionProperties 反思次数和上下文边界
      */
     public AgentLoop(
             DeepSeekClient deepSeekClient,
             ToolRegistry toolRegistry,
             ToolExecutor toolExecutor,
             AgentLoopProperties properties,
-            ExecutionEnvironmentProvider executionEnvironmentProvider
+            ExecutionEnvironmentProvider executionEnvironmentProvider,
+            ReflectionReviewer reflectionReviewer,
+            ReflectionProperties reflectionProperties
     ) {
         this.deepSeekClient = deepSeekClient;
         this.toolRegistry = toolRegistry;
         this.toolExecutor = toolExecutor;
         this.properties = properties;
         this.executionEnvironmentProvider = executionEnvironmentProvider;
+        this.reflectionReviewer = reflectionReviewer;
+        this.reflectionProperties = reflectionProperties;
     }
 
     /**
@@ -151,6 +163,7 @@ public class AgentLoop {
         UsageAccumulator usage = new UsageAccumulator();
         String model = null;
         boolean applyCodeCorrectionIssued = false;
+        int reflectionRounds = 0;
 
         for (int iteration = 1; iteration <= properties.maxIterations(); iteration++) {
             safeCancellation.throwIfCancellationRequested();
@@ -216,6 +229,28 @@ public class AgentLoop {
                     continue;
                 }
                 boolean completed = answer != null && !answer.isBlank();
+                if (shouldReflect(
+                        toolsEnabled,
+                        completed,
+                        finishReason,
+                        iteration,
+                        reflectionRounds,
+                        toolSteps
+                )) {
+                    safeCancellation.throwIfCancellationRequested();
+                    safeObserver.onReflectionStarted(iteration);
+                    ReflectionReview review = reflectionReviewer.review(task, answer, List.copyOf(toolSteps));
+                    safeCancellation.throwIfCancellationRequested();
+                    reflectionRounds++;
+                    usage.add(review.usage());
+                    ReflectionFeedback feedback = review.feedback();
+                    safeObserver.onReflectionCompleted(iteration, feedback);
+                    if (feedback.requiresRevision()) {
+                        safeObserver.onAnswerReset(iteration);
+                        messages.add(DeepSeekMessage.user(feedback.revisionInstruction()));
+                        continue;
+                    }
+                }
                 if (completed && finishReason != null && !"stop".equals(finishReason)) {
                     return result(
                             answer,
@@ -464,6 +499,34 @@ public class AgentLoop {
      */
     private static boolean hasSuccessfulMutation(List<AgentRunResult.ToolStep> toolSteps) {
         return toolSteps.stream().anyMatch(step -> step.success() && MUTATING_TOOLS.contains(step.toolName()));
+    }
+
+    /**
+     * 判断候选最终回答是否需要执行一次结束前反思。
+     * 为 REVISE 预留“修正行动 + 新最终回答”两轮，避免在循环边界制造无法完成的修改。
+     *
+     * @param toolsEnabled 当前是否为 CODE 会话
+     * @param completed 候选回答是否非空
+     * @param finishReason 模型停止原因
+     * @param iteration 当前一基轮次
+     * @param reflectionRounds 已执行反思次数
+     * @param toolSteps 当前工具轨迹
+     * @return 满足一次性反思触发条件时返回 {@code true}
+     */
+    private boolean shouldReflect(
+            boolean toolsEnabled,
+            boolean completed,
+            String finishReason,
+            int iteration,
+            int reflectionRounds,
+            List<AgentRunResult.ToolStep> toolSteps
+    ) {
+        return toolsEnabled
+                && completed
+                && (finishReason == null || "stop".equals(finishReason))
+                && reflectionRounds < reflectionProperties.maxRounds()
+                && iteration + 2 <= properties.maxIterations()
+                && hasSuccessfulMutation(toolSteps);
     }
 
     /**
