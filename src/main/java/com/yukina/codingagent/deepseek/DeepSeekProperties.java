@@ -48,7 +48,11 @@ public record DeepSeekProperties(
         }
     }
 
-    /** @return 由基础地址拼接得到的 Chat Completions URI */
+    /**
+     * 构造 DeepSeek Chat Completions 接口地址。
+     *
+     * @return 由基础地址拼接得到的 Chat Completions URI
+     */
     public URI chatCompletionsUri() {
         return URI.create(baseUrl + "/chat/completions");
     }

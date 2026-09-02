@@ -9,6 +9,7 @@ import java.util.Set;
  */
 public final class WorkspaceFilePolicy {
 
+    /** 遍历时忽略的依赖、构建产物和版本控制目录名。 */
     private static final Set<String> EXCLUDED_DIRECTORIES = Set.of(
             ".git",
             ".gradle",

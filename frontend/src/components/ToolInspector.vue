@@ -33,6 +33,7 @@ watch(
   },
 )
 
+/** 按成功、警告和失败聚合当前工具轨迹。 */
 const outcomeCounts = computed(() => {
   const counts = { success: 0, warning: 0, failure: 0 }
   props.steps.forEach((step) => counts[stepOutcome(step)]++)

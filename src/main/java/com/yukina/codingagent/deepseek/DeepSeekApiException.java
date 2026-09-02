@@ -5,6 +5,7 @@ package com.yukina.codingagent.deepseek;
  */
 public class DeepSeekApiException extends RuntimeException {
 
+    /** HTTP 调用失败状态码；客户端内部错误使用 {@code -1}。 */
     private final int statusCode;
 
     /**

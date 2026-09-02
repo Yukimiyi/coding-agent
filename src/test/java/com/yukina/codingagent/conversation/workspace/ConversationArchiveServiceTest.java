@@ -17,11 +17,14 @@ import java.util.zip.ZipInputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+/** 验证会话项目下载包只包含用户可见的有效项目文件。 */
 class ConversationArchiveServiceTest {
 
+    /** 为每个用例提供隔离的会话数据根目录。 */
     @TempDir
     Path tempDirectory;
 
+    /** 验证归档保留源码目录，并排除可以重新安装的依赖缓存。 */
     @Test
     void archivesProjectFilesAndSkipsDependencyCaches() throws Exception {
         ConversationWorkspaceService workspaceService = new ConversationWorkspaceService(

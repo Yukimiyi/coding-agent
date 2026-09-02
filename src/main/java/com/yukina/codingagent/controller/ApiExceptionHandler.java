@@ -15,6 +15,10 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
+    /** 创建无状态的统一异常响应处理器。 */
+    public ApiExceptionHandler() {
+    }
+
     /**
      * 将会话不存在异常映射为 HTTP 404。
      *

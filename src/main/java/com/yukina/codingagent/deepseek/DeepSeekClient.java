@@ -20,8 +20,11 @@ import java.util.stream.Stream;
 @Component
 public class DeepSeekClient {
 
+    /** DeepSeek 地址、模型、密钥、超时和重试配置。 */
     private final DeepSeekProperties properties;
+    /** 请求和响应协议 JSON 映射器。 */
     private final ObjectMapper objectMapper;
+    /** 复用连接并执行同步 HTTP 与 SSE 请求的 JDK 客户端。 */
     private final HttpClient httpClient;
 
     /**
@@ -261,14 +264,26 @@ public class DeepSeekClient {
 
     /** 聚合文本、推理协议字段、工具调用和用量数据。 */
     private static final class StreamAccumulator {
+        /** 流式响应 ID。 */
         private String id;
+        /** 服务端实际使用的模型名称。 */
         private String model;
+        /** 最后一个候选增量给出的停止原因。 */
         private String finishReason;
+        /** 面向用户的公开回答文本缓冲区。 */
         private final StringBuilder content = new StringBuilder();
+        /** 仅供协议连续性使用、不向界面公开的推理文本缓冲区。 */
         private final StringBuilder reasoningContent = new StringBuilder();
+        /** 按调用索引聚合跨 SSE 数据块的工具调用。 */
         private final Map<Integer, ToolCallAccumulator> toolCalls = new TreeMap<>();
+        /** 流尾返回的完整 Token 用量。 */
         private DeepSeekChatResponse.Usage usage;
+        /** 是否至少接收到一个有效候选增量。 */
         private boolean receivedChoice;
+
+        /** 创建空的流式响应聚合器。 */
+        private StreamAccumulator() {
+        }
 
         /**
          * 合并单个模型增量，并仅推送公开回答文本。
@@ -374,10 +389,18 @@ public class DeepSeekClient {
 
     /** 聚合单个流式函数工具调用。 */
     private static final class ToolCallAccumulator {
+        /** 跨数据块拼接的工具调用 ID。 */
         private final StringBuilder id = new StringBuilder();
+        /** 跨数据块拼接的调用类型。 */
         private final StringBuilder type = new StringBuilder();
+        /** 跨数据块拼接的函数名称。 */
         private final StringBuilder name = new StringBuilder();
+        /** 跨数据块拼接的 JSON 参数文本。 */
         private final StringBuilder arguments = new StringBuilder();
+
+        /** 创建空的函数工具调用聚合器。 */
+        private ToolCallAccumulator() {
+        }
 
         /**
          * 合并单个工具调用增量。
@@ -393,7 +416,11 @@ public class DeepSeekClient {
             }
         }
 
-        /** @return 拼接完成的函数工具调用 */
+        /**
+         * 将所有增量转换为完整函数工具调用。
+         *
+         * @return 拼接完成的函数工具调用
+         */
         private DeepSeekToolCall result() {
             return new DeepSeekToolCall(
                     id.toString(),

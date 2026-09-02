@@ -27,7 +27,11 @@ public record ProjectSnapshot(
         environmentSummary = environmentSummary == null ? "" : environmentSummary;
     }
 
-    /** @return 可通过 SSE 展示的简短感知结果 */
+    /**
+     * 生成不包含文件内容和宿主机路径的感知摘要。
+     *
+     * @return 可通过 SSE 展示的简短感知结果
+     */
     public String publicSummary() {
         if (empty) {
             return "已感知空项目和当前执行环境";

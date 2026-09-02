@@ -23,14 +23,19 @@ public record ConversationMessage(
 
     /** 会话消息角色。 */
     public enum Role {
+        /** 当前轮或历史中的用户请求。 */
         USER,
+        /** Agent 成功回答或错误审计消息。 */
         ASSISTANT
     }
 
     /** 消息是否可用于后续模型上下文。 */
     public enum Status {
+        /** 用户请求已持久化但 Agent 尚未完成。 */
         PENDING,
+        /** 完整轮次成功，可进入后续模型上下文。 */
         SUCCESS,
+        /** 当前轮失败，仅用于界面展示和审计。 */
         ERROR
     }
 }

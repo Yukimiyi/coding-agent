@@ -49,6 +49,7 @@ const draft = ref('')
 const composer = ref(null)
 const fileInput = ref(null)
 const folderInput = ref(null)
+/** 最近一条助手消息 ID，用于只在最终回答后展示对应执行记录。 */
 const latestAssistantId = computed(() => {
   const assistantMessages = props.messages.filter((message) => message.role === 'ASSISTANT')
   return assistantMessages.at(-1)?.id ?? null
@@ -63,7 +64,7 @@ function sendTask() {
   nextTick(resizeComposer)
 }
 
-/** @param {KeyboardEvent} event 输入框键盘事件。 */
+/** @param {KeyboardEvent} event 输入框键盘事件。 @returns {void} */
 function handleKeydown(event) {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault()
@@ -78,26 +79,37 @@ function resizeComposer() {
   composer.value.style.height = `${Math.min(composer.value.scrollHeight, 180)}px`
 }
 
-/** @param {Event} event 文件输入事件。 */
+/** @param {Event} event 文件输入事件。 @returns {void} */
 function emitFiles(event) {
   const files = Array.from(event.target.files || [])
   if (files.length) emit('upload', files)
   event.target.value = ''
 }
 
-/** @returns {string} 本地小时和分钟。 */
+/**
+ * @param {string|number|Date} value 可由 Date 解析的时间值。
+ * @returns {string} 本地小时和分钟。
+ */
 function formatTime(value) {
   return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 }
 
-/** @returns {string} Agent 当前运行状态。 */
+/**
+ * @param {string|null} status 当前运行状态。
+ * @param {number} iteration 当前循环轮次。
+ * @param {string} toolName 当前工具名称。
+ * @returns {string} Agent 当前运行状态。
+ */
 function runLabel(status, iteration, toolName) {
   if (status === 'QUEUED') return '等待执行'
   if (toolName) return `第 ${iteration || 1} 轮 · ${toolName}`
   return `第 ${iteration || 1} 轮 · Agent 正在工作`
 }
 
-/** @returns {string} 最终计划的简短完成统计。 */
+/**
+ * @param {object|null} plan 最终结构化计划。
+ * @returns {string} 最终计划的简短完成统计。
+ */
 function planSummary(plan) {
   if (!plan?.steps?.length) return '工作过程'
   const completed = plan.steps.filter((step) => step.status === 'COMPLETED').length

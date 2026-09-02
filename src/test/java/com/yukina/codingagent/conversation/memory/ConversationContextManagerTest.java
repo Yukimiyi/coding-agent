@@ -2,6 +2,7 @@ package com.yukina.codingagent.conversation.memory;
 
 import com.yukina.codingagent.conversation.model.ConversationMessage;
 import com.yukina.codingagent.conversation.repository.ConversationRepository;
+import com.yukina.codingagent.conversation.repository.ConversationSummaryRepository;
 import com.yukina.codingagent.deepseek.DeepSeekMessage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +27,7 @@ class ConversationContextManagerTest {
 
     private EmbeddedDatabase database;
     private ConversationRepository repository;
+    private ConversationSummaryRepository summaryRepository;
     private ConversationContextProperties properties;
 
     /** 创建隔离数据库、基础会话和上下文配置。 */
@@ -36,7 +38,9 @@ class ConversationContextManagerTest {
                 .setType(EmbeddedDatabaseType.H2)
                 .addScript("schema.sql")
                 .build();
-        repository = new ConversationRepository(new JdbcTemplate(database));
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(database);
+        repository = new ConversationRepository(jdbcTemplate);
+        summaryRepository = new ConversationSummaryRepository(jdbcTemplate);
         repository.create("conversation-1", "Test", Instant.now());
         properties = new ConversationContextProperties(4, 100, 300, Duration.ofMinutes(30), 10);
     }
@@ -52,6 +56,7 @@ class ConversationContextManagerTest {
     void reloadsContextFromDatabaseWithoutDuplicatingLatestMessage() {
         ConversationContextManager firstManager = new ConversationContextManager(
                 repository,
+                summaryRepository,
                 new InMemoryConversationMemoryStore(properties),
                 properties
         );
@@ -60,6 +65,7 @@ class ConversationContextManagerTest {
 
         ConversationContextManager restartedManager = new ConversationContextManager(
                 repository,
+                summaryRepository,
                 new InMemoryConversationMemoryStore(properties),
                 properties
         );
@@ -107,6 +113,7 @@ class ConversationContextManagerTest {
         );
         ConversationContextManager manager = new ConversationContextManager(
                 repository,
+                summaryRepository,
                 new InMemoryConversationMemoryStore(bounded),
                 bounded
         );
@@ -114,6 +121,60 @@ class ConversationContextManagerTest {
         List<DeepSeekMessage> context = manager.load("conversation-1");
 
         assertEquals(List.of("new", "yes"), context.stream().map(DeepSeekMessage::content).toList());
+    }
+
+    /** 验证奇数消息预算也不会保留只有助手消息的半轮历史。 */
+    @Test
+    void trimsHistoryByCompleteConversationTurns() {
+        Instant now = Instant.now();
+        repository.appendMessage("conversation-1", ConversationMessage.Role.USER, "first", ConversationMessage.Status.SUCCESS, now);
+        repository.appendMessage("conversation-1", ConversationMessage.Role.ASSISTANT, "one", ConversationMessage.Status.SUCCESS, now);
+        repository.appendMessage("conversation-1", ConversationMessage.Role.USER, "second", ConversationMessage.Status.SUCCESS, now);
+        repository.appendMessage("conversation-1", ConversationMessage.Role.ASSISTANT, "two", ConversationMessage.Status.SUCCESS, now);
+        ConversationContextProperties oddLimit = new ConversationContextProperties(
+                3,
+                100,
+                300,
+                Duration.ofMinutes(30),
+                10
+        );
+        ConversationContextManager manager = new ConversationContextManager(
+                repository,
+                summaryRepository,
+                new InMemoryConversationMemoryStore(oddLimit),
+                oddLimit
+        );
+
+        List<DeepSeekMessage> context = manager.load("conversation-1");
+
+        assertEquals(List.of("second", "two"), context.stream().map(DeepSeekMessage::content).toList());
+    }
+
+    /** 验证滚动摘要作为独立系统背景置于最近原始轮次之前。 */
+    @Test
+    void prependsStructuredSummaryWithoutCachingItAsRawHistory() {
+        summaryRepository.upsert(
+                "conversation-1",
+                "{\"goal\":\"remember the goal\",\"constraints\":[]}",
+                2,
+                Instant.now()
+        );
+        ConversationContextManager manager = new ConversationContextManager(
+                repository,
+                summaryRepository,
+                new InMemoryConversationMemoryStore(properties),
+                properties
+        );
+        manager.appendSuccess("conversation-1", ConversationMessage.Role.USER, "latest question");
+        manager.appendSuccess("conversation-1", ConversationMessage.Role.ASSISTANT, "latest answer");
+
+        List<DeepSeekMessage> context = manager.load("conversation-1");
+
+        assertEquals(List.of("system", "user", "assistant"), context.stream().map(DeepSeekMessage::role).toList());
+        assertTrue(context.getFirst().content().contains("remember the goal"));
+        assertEquals(List.of("latest question", "latest answer"), context.subList(1, 3).stream()
+                .map(DeepSeekMessage::content)
+                .toList());
     }
 
     /** 支持手动推进时间的测试时钟。 */

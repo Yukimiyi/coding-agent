@@ -1,6 +1,7 @@
 package com.yukina.codingagent.agent.reflection;
 
 import com.yukina.codingagent.agent.AgentRunResult;
+import com.yukina.codingagent.agent.ResponseLanguagePolicy;
 import com.yukina.codingagent.agent.plan.AgentPlan;
 import com.yukina.codingagent.deepseek.DeepSeekChatResponse;
 import com.yukina.codingagent.deepseek.DeepSeekClient;
@@ -21,11 +22,16 @@ import java.util.Set;
 @Service
 public class DeepSeekReflectionReviewer implements ReflectionReviewer {
 
+    /** 能够形成文件变更证据的工具名称集合。 */
     private static final Set<String> MUTATING_TOOLS = Set.of("write_file", "edit_file", "delete_file");
+    /** 能够形成编译、测试或运行验证证据的命令工具名称。 */
     private static final String EXECUTE_COMMAND = "execute_command";
 
+    /** 执行无工具审查调用的 DeepSeek 客户端。 */
     private final DeepSeekClient deepSeekClient;
+    /** 解析审查模型 JSON 及工具参数的映射器。 */
     private final ObjectMapper objectMapper;
+    /** Reflection 输入预算、轮数和系统提示词配置。 */
     private final ReflectionProperties properties;
 
     /**
@@ -56,12 +62,14 @@ public class DeepSeekReflectionReviewer implements ReflectionReviewer {
         String evidence = buildEvidence(task, candidateAnswer, toolSteps == null ? List.of() : toolSteps, plan);
         DeepSeekChatResponse response = deepSeekClient.chat(
                 List.of(
-                        DeepSeekMessage.system(properties.systemPrompt()),
+                        DeepSeekMessage.system(
+                                properties.systemPrompt() + "\n\n" + ResponseLanguagePolicy.instructionFor(task)
+                        ),
                         DeepSeekMessage.user(evidence)
                 ),
                 List.of()
         );
-        return new ReflectionReview(parseFeedback(response.firstContent()), response.usage());
+        return new ReflectionReview(parseFeedback(response.firstContent(), task), response.usage());
     }
 
     /**
@@ -138,10 +146,11 @@ public class DeepSeekReflectionReviewer implements ReflectionReviewer {
      * 解析审查模型的 JSON，并拒绝协议外状态。
      *
      * @param content 模型文本
+     * @param task 原始用户任务，用于保证公开摘要语言一致
      * @return 结构化 PASS 或 REVISE 反馈
      * @throws IllegalStateException 文本不是要求的 JSON 协议时抛出
      */
-    private ReflectionFeedback parseFeedback(String content) {
+    private ReflectionFeedback parseFeedback(String content, String task) {
         try {
             JsonNode root = objectMapper.readTree(stripCodeFence(content));
             ReflectionFeedback.Verdict verdict = ReflectionFeedback.Verdict.valueOf(
@@ -152,13 +161,24 @@ public class DeepSeekReflectionReviewer implements ReflectionReviewer {
             if (issueNodes.isArray()) {
                 issueNodes.forEach(node -> issues.add(node.asText()));
             }
-            return new ReflectionFeedback(verdict, root.path("summary").asText(), issues);
+            String summary = root.path("summary").asText();
+            if (ResponseLanguagePolicy.requiresChineseRewrite(task, summary)) {
+                summary = verdict == ReflectionFeedback.Verdict.PASS
+                        ? "现有证据支持任务完成"
+                        : "结果检查发现仍有需要修正的问题";
+            }
+            return new ReflectionFeedback(verdict, summary, issues);
         } catch (JacksonException | IllegalArgumentException | NullPointerException exception) {
             throw new IllegalStateException("Reflection model returned an invalid PASS/REVISE response", exception);
         }
     }
 
-    /** @return 去除可选 Markdown JSON 围栏后的响应文本 */
+    /**
+     * 去除审查模型偶发添加的 Markdown JSON 围栏。
+     *
+     * @param content 审查模型原始响应
+     * @return 可交给 JSON 解析器的响应文本
+     */
     private static String stripCodeFence(String content) {
         if (content == null || content.isBlank()) {
             throw new IllegalStateException("Reflection model returned an empty response");
@@ -177,25 +197,46 @@ public class DeepSeekReflectionReviewer implements ReflectionReviewer {
 
     /** 按总字符预算拼接清晰的证据分区。 */
     private static final class EvidenceBuilder {
+        /** 最终证据文本最大字符数。 */
         private final int limit;
+        /** 已按预算累计的证据文本。 */
         private final StringBuilder value = new StringBuilder();
 
-        /** @param limit 最终证据最大字符数 */
+        /**
+         * 创建空的有界证据构建器。
+         *
+         * @param limit 最终证据最大字符数
+         */
         private EvidenceBuilder(int limit) {
             this.limit = limit;
         }
 
-        /** @param title 分区标题 @param content 分区内容 */
+        /**
+         * 追加一个带 Markdown 标题的证据分区。
+         *
+         * @param title 分区标题
+         * @param content 分区内容
+         */
         private void section(String title, String content) {
             append("\n## " + title + "\n" + (content == null ? "" : content) + "\n");
         }
 
-        /** @param title 分区标题 @param lines 条目 @param emptyValue 空列表替代文本 */
+        /**
+         * 将字符串列表转换为项目符号证据分区。
+         *
+         * @param title 分区标题
+         * @param lines 证据条目
+         * @param emptyValue 空列表替代文本
+         */
         private void lines(String title, List<String> lines, String emptyValue) {
             section(title, lines.isEmpty() ? emptyValue : "- " + String.join("\n- ", lines));
         }
 
-        /** @param text 待加入字符预算的文本 */
+        /**
+         * 在剩余字符预算内追加文本。
+         *
+         * @param text 待加入字符预算的文本
+         */
         private void append(String text) {
             int remaining = limit - value.length();
             if (remaining <= 0) {
@@ -204,7 +245,11 @@ public class DeepSeekReflectionReviewer implements ReflectionReviewer {
             value.append(text, 0, Math.min(remaining, text.length()));
         }
 
-        /** @return 已按总预算截断的证据文本 */
+        /**
+         * 返回当前证据文本。
+         *
+         * @return 已按总预算截断的证据文本
+         */
         private String value() {
             return value.toString();
         }

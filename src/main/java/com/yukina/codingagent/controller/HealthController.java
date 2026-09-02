@@ -11,6 +11,10 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/health")
 public class HealthController {
 
+    /** 创建无状态的健康检查控制器。 */
+    public HealthController() {
+    }
+
     /**
      * 返回应用进程的存活状态。
      *

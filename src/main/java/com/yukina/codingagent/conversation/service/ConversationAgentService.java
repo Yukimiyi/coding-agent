@@ -6,6 +6,7 @@ import com.yukina.codingagent.agent.AgentRunCancellation;
 import com.yukina.codingagent.agent.AgentRunCancelledException;
 import com.yukina.codingagent.agent.AgentRunResult;
 import com.yukina.codingagent.conversation.memory.ConversationContextManager;
+import com.yukina.codingagent.conversation.memory.ConversationSummaryService;
 import com.yukina.codingagent.conversation.model.Conversation;
 import com.yukina.codingagent.conversation.model.ConversationChatResult;
 import com.yukina.codingagent.conversation.model.ConversationMessage;
@@ -23,11 +24,19 @@ import java.util.List;
 @Service
 public class ConversationAgentService {
 
+    /** 执行 ReAct、Planning 和 Reflection 的 Agent 主循环。 */
     private final AgentLoop agentLoop;
+    /** 创建、查询和更新会话元数据的领域服务。 */
     private final ConversationService conversationService;
+    /** 持久化消息并组装模型上下文窗口的管理器。 */
     private final ConversationContextManager contextManager;
+    /** 将较早完整成功轮次压缩为长期记忆的服务。 */
+    private final ConversationSummaryService summaryService;
+    /** 保证同一会话请求串行执行的锁管理器。 */
     private final ConversationLockManager lockManager;
+    /** 创建和解析 CODE 会话托管项目目录的服务。 */
     private final ConversationWorkspaceService workspaceService;
+    /** 将当前会话目录绑定到工具执行线程的上下文。 */
     private final WorkspaceExecutionContext workspaceExecutionContext;
 
     /**
@@ -36,6 +45,7 @@ public class ConversationAgentService {
      * @param agentLoop Agent 主循环
      * @param conversationService 会话领域服务
      * @param contextManager 持久化和热上下文管理器
+     * @param summaryService 成功轮次增量摘要服务
      * @param lockManager 会话串行锁
      * @param workspaceService CODE 会话目录服务
      * @param workspaceExecutionContext 工具执行根目录上下文
@@ -44,6 +54,7 @@ public class ConversationAgentService {
             AgentLoop agentLoop,
             ConversationService conversationService,
             ConversationContextManager contextManager,
+            ConversationSummaryService summaryService,
             ConversationLockManager lockManager,
             ConversationWorkspaceService workspaceService,
             WorkspaceExecutionContext workspaceExecutionContext
@@ -51,6 +62,7 @@ public class ConversationAgentService {
         this.agentLoop = agentLoop;
         this.conversationService = conversationService;
         this.contextManager = contextManager;
+        this.summaryService = summaryService;
         this.lockManager = lockManager;
         this.workspaceService = workspaceService;
         this.workspaceExecutionContext = workspaceExecutionContext;
@@ -187,6 +199,7 @@ public class ConversationAgentService {
                         ConversationMessage.Role.ASSISTANT,
                         result.answer()
                 );
+                summaryService.compactIfNeeded(conversationId);
             } else {
                 contextManager.markError(pendingUser);
                 contextManager.appendError(
@@ -227,12 +240,20 @@ public class ConversationAgentService {
             boolean created,
             String task
     ) {
-        /** @return 固定会话 ID */
+        /**
+         * 返回准备阶段固定下来的会话 ID。
+         *
+         * @return 固定会话 ID
+         */
         public String conversationId() {
             return conversation.id();
         }
 
-        /** @return 固定 CHAT 或 CODE 模式 */
+        /**
+         * 返回会话创建后不可变的执行模式。
+         *
+         * @return 固定 CHAT 或 CODE 模式
+         */
         public ConversationMode mode() {
             return conversation.mode();
         }

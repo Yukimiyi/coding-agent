@@ -25,12 +25,16 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class EnvironmentProbeService implements ExecutionEnvironmentProvider {
 
+    /** 单个版本命令允许占用的最长时间。 */
     private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(3);
+    /** 写入环境摘要的单行版本文本上限。 */
     private static final int MAX_VERSION_CHARS = 180;
+    /** 版本探测子进程允许从主进程继承的最小环境变量集合。 */
     private static final Set<String> SAFE_ENVIRONMENT_VARIABLES = Set.of(
             "COMSPEC", "HOME", "JAVA_HOME", "LANG", "LC_ALL", "PATH", "PATHEXT",
             "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE"
     );
+    /** 应向 Agent 报告的内置 Java 开发工具定义。 */
     private static final List<ToolSpec> TOOL_SPECS = List.of(
             spec("java", "Java", List.of("java"), List.of("--version"),
                     "请安装 Java 21 或更高版本的 JDK，并将 bin 目录加入 PATH。"),
@@ -62,9 +66,13 @@ public class EnvironmentProbeService implements ExecutionEnvironmentProvider {
                     "请安装 .NET SDK 并将其加入 PATH。")
     );
 
+    /** 命令白名单和宿主程序搜索路径配置。 */
     private final CommandProperties properties;
+    /** 提供可选的当前 CODE 会话目录，以识别项目 Wrapper。 */
     private final WorkspaceExecutionContext workspaceExecutionContext;
+    /** 串行化首次探测及强制刷新操作的监视器。 */
     private final Object cacheMonitor = new Object();
+    /** 可跨运行复用、且不包含项目 Wrapper 的宿主环境快照。 */
     private volatile HostSnapshot cachedHostSnapshot;
 
     /**

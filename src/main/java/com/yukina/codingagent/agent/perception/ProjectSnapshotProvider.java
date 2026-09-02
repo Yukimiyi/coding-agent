@@ -24,16 +24,21 @@ import java.util.stream.Stream;
 @Component
 public class ProjectSnapshotProvider {
 
+    /** 不参与感知的依赖、构建产物和版本控制目录。 */
     private static final Set<String> SKIPPED_DIRECTORIES = Set.of(
             ".git", ".gradle", ".idea", "node_modules", "target", "out", "build", "dist"
     );
+    /** 允许读取少量内容、用于识别项目类型的描述文件名。 */
     private static final Set<String> DESCRIPTOR_NAMES = Set.of(
             "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
             "package.json", "readme.md", "readme.txt", "gradle.properties", "cargo.toml", "go.mod"
     );
 
+    /** 提供当前运行绑定的会话工作目录。 */
     private final WorkspaceExecutionContext workspaceExecutionContext;
+    /** 提供不暴露宿主机路径的执行环境摘要。 */
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
+    /** 控制目录深度、文件数量和描述文本预算。 */
     private final PlanningProperties properties;
 
     /**
@@ -106,7 +111,13 @@ public class ProjectSnapshotProvider {
         );
     }
 
-    /** @return 路径是否位于应忽略的可再生目录内 */
+    /**
+     * 判断路径是否位于应忽略的可再生目录内。
+     *
+     * @param root 工作区根目录
+     * @param path 待检查路径
+     * @return 路径任一相对层级命中忽略目录时返回 {@code true}
+     */
     private static boolean isInsideSkippedDirectory(Path root, Path path) {
         Path relative = root.relativize(path);
         for (Path part : relative) {
@@ -117,7 +128,12 @@ public class ProjectSnapshotProvider {
         return false;
     }
 
-    /** @return 文件名是否属于 Planner 有价值的项目描述文件 */
+    /**
+     * 判断文件名是否属于 Planner 有价值的项目描述文件。
+     *
+     * @param path 待检查文件
+     * @return 文件名命中描述文件白名单时返回 {@code true}
+     */
     private static boolean isDescriptor(Path path) {
         Path fileName = path.getFileName();
         return fileName != null && DESCRIPTOR_NAMES.contains(fileName.toString().toLowerCase(Locale.ROOT));
@@ -141,7 +157,13 @@ public class ProjectSnapshotProvider {
         }
     }
 
-    /** @return 使用正斜杠且为目录添加尾斜杠的工作区相对路径 */
+    /**
+     * 生成适合模型读取、且不暴露绝对目录的相对路径。
+     *
+     * @param root 工作区根目录
+     * @param path 工作区内文件或目录
+     * @return 使用正斜杠且为目录添加尾斜杠的相对路径
+     */
     private static String display(Path root, Path path) {
         String relative = root.relativize(path).toString().replace('\\', '/');
         return Files.isDirectory(path) ? relative + "/" : relative;

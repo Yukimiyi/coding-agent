@@ -28,8 +28,11 @@ import java.util.UUID;
 @Service
 public class ConversationFileImportService {
 
+    /** 定位会话正式目录和上传暂存根目录的服务。 */
     private final ConversationWorkspaceService workspaceService;
+    /** 单文件、文件总量和总字节数安全边界。 */
     private final ConversationWorkspaceProperties properties;
+    /** 防止导入与同一会话 Agent 文件操作并发执行的锁。 */
     private final ConversationLockManager lockManager;
 
     /**
@@ -94,6 +97,15 @@ public class ConversationFileImportService {
         );
     }
 
+    /**
+     * 在已持有会话锁时读取并初步校验浏览器上传内容。
+     *
+     * @param conversation 目标 CODE 会话
+     * @param files 上传文件列表
+     * @param relativePaths 与上传文件顺序对应的项目相对路径
+     * @return 校验并提交后的导入摘要
+     * @throws IllegalArgumentException 文件数量、大小、路径或读取结果不合法时抛出
+     */
     private ConversationImportResult importLocked(
             Conversation conversation,
             List<MultipartFile> files,
@@ -133,6 +145,14 @@ public class ConversationFileImportService {
         return commit(conversation, sources);
     }
 
+    /**
+     * 先将所有文件写入暂存目录，再以移动方式提交到正式工作区。
+     *
+     * @param conversation 目标 CODE 会话
+     * @param sources 已加载到内存的源文件
+     * @return 成功提交的文件数量、总字节数和路径
+     * @throws ConversationWorkspaceException 目标冲突或文件系统操作失败时抛出
+     */
     private ConversationImportResult commit(Conversation conversation, List<SourceFile> sources) {
         Path root = workspaceService.root(conversation);
         Set<Path> targets = new HashSet<>();
@@ -180,6 +200,13 @@ public class ConversationFileImportService {
         );
     }
 
+    /**
+     * 为一次导入创建会话关联的唯一暂存目录。
+     *
+     * @param conversationId 目标会话 ID
+     * @return 位于内部 imports 根目录下的新目录
+     * @throws ConversationWorkspaceException 暂存目录无法创建时抛出
+     */
     private Path createStagingDirectory(String conversationId) {
         try {
             return Files.createTempDirectory(
@@ -191,6 +218,12 @@ public class ConversationFileImportService {
         }
     }
 
+    /**
+     * 当所有上传路径共享唯一顶层文件夹时去除该层目录。
+     *
+     * @param paths 浏览器提供的原始相对路径
+     * @return 保持文件顺序的规范化项目相对路径
+     */
     private static List<String> normalizeUploadRoot(List<String> paths) {
         List<Path> normalized = paths.stream().map(ConversationFileImportService::parseRelativePath).toList();
         if (normalized.isEmpty() || normalized.stream().anyMatch(path -> path.getNameCount() < 2)) {
@@ -203,10 +236,23 @@ public class ConversationFileImportService {
         return normalized.stream().map(path -> portable(path.subpath(1, path.getNameCount()))).toList();
     }
 
+    /**
+     * 校验并转换单个上传相对路径。
+     *
+     * @param rawPath 浏览器或粘贴请求提供的路径
+     * @return 使用正斜杠且不越出项目根目录的路径
+     */
     private static String normalizeRelativePath(String rawPath) {
         return portable(parseRelativePath(rawPath));
     }
 
+    /**
+     * 将不可信文本解析为受限相对路径对象。
+     *
+     * @param rawPath 待解析路径文本
+     * @return 规范化相对路径
+     * @throws IllegalArgumentException 路径为空、绝对、越界或语法无效时抛出
+     */
     private static Path parseRelativePath(String rawPath) {
         if (rawPath == null || rawPath.isBlank()) {
             throw new IllegalArgumentException("Uploaded path must not be blank");
@@ -222,10 +268,23 @@ public class ConversationFileImportService {
         }
     }
 
+    /**
+     * 将平台路径转换为接口使用的正斜杠形式。
+     *
+     * @param path 待转换路径
+     * @return 使用正斜杠的路径文本
+     */
     private static String portable(Path path) {
         return path.toString().replace('\\', '/');
     }
 
+    /**
+     * 检查目标路径各层级均不是符号链接，防止间接逃逸工作区。
+     *
+     * @param root 已验证的正式项目根目录
+     * @param target 待创建文件目标
+     * @throws IllegalArgumentException 任一路径层级为符号链接时抛出
+     */
     private static void ensureNoSymbolicLinks(Path root, Path target) {
         Path cursor = root;
         for (Path segment : root.relativize(target)) {
@@ -236,6 +295,13 @@ public class ConversationFileImportService {
         }
     }
 
+    /**
+     * 优先原子移动暂存文件，不支持时回退为普通同文件系统移动。
+     *
+     * @param source 暂存文件
+     * @param target 正式项目目标文件
+     * @throws IOException 两种移动方式均失败时抛出
+     */
     private static void move(Path source, Path target) throws IOException {
         try {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
@@ -244,6 +310,11 @@ public class ConversationFileImportService {
         }
     }
 
+    /**
+     * 按提交逆序尽力删除本次已经创建的正式文件。
+     *
+     * @param paths 已成功移动到正式目录的文件
+     */
     private static void rollback(List<Path> paths) {
         for (int index = paths.size() - 1; index >= 0; index--) {
             try {
@@ -254,6 +325,11 @@ public class ConversationFileImportService {
         }
     }
 
+    /**
+     * 尽力清理内部暂存目录，不覆盖原始导入结果或异常。
+     *
+     * @param root 待删除暂存目录
+     */
     private static void deleteTreeQuietly(Path root) {
         if (root == null || Files.notExists(root)) {
             return;
@@ -267,9 +343,22 @@ public class ConversationFileImportService {
         }
     }
 
+    /**
+     * 尚未完成路径规范化的内存源文件。
+     *
+     * @param relativePath 调用方提供的相对路径
+     * @param content 文件原始字节
+     */
     private record SourceFile(String relativePath, byte[] content) {
     }
 
+    /**
+     * 已通过路径和冲突检查、等待暂存提交的文件。
+     *
+     * @param relativePath 规范化项目相对路径
+     * @param target 正式工作区目标路径
+     * @param content 文件原始字节
+     */
     private record PendingFile(String relativePath, Path target, byte[] content) {
     }
 }

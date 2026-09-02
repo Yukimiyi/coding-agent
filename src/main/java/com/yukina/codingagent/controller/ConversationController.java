@@ -29,8 +29,11 @@ import java.util.List;
 @RequestMapping("/conversations")
 public class ConversationController {
 
+    /** 管理会话元数据、分页消息和删除操作的领域服务。 */
     private final ConversationService conversationService;
+    /** 判断 CODE 会话是否已有可下载文件的目录服务。 */
     private final ConversationWorkspaceService workspaceService;
+    /** 查询会话最近终态 Agent 运行的仓储。 */
     private final AgentRunHistoryRepository runHistoryRepository;
 
     /**
@@ -152,7 +155,11 @@ public class ConversationController {
     public record CreateConversationRequest(String title, ConversationMode mode) {
     }
 
-    /** @param title 新会话标题 */
+    /**
+     * 修改会话标题的请求体。
+     *
+     * @param title 新会话标题
+     */
     public record RenameConversationRequest(String title) {
     }
 
@@ -176,6 +183,12 @@ public class ConversationController {
     ) {
     }
 
+    /**
+     * 将内部会话实体转换为不暴露本地路径的前端响应。
+     *
+     * @param conversation 待转换会话
+     * @return 包含模式、文件可用性和时间的会话响应
+     */
     private ConversationResponse response(Conversation conversation) {
         return new ConversationResponse(
                 conversation.id(),

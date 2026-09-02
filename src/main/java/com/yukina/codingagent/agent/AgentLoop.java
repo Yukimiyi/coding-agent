@@ -34,30 +34,35 @@ import java.util.Set;
 @Service
 public class AgentLoop {
 
+    /** CHAT 会话使用的无工作空间系统提示词。 */
     private static final String CHAT_ONLY_SYSTEM_PROMPT =
             "You are a coding assistant in a conversation without an attached workspace. "
                     + "Answer from the conversation context. You cannot inspect, modify, or execute local files, "
                     + "so do not claim that you performed those actions.";
+    /** 能够改变工作区文件状态的工具名称集合。 */
     private static final Set<String> MUTATING_TOOLS = Set.of("write_file", "edit_file", "delete_file");
-    private static final String APPLY_CODE_CORRECTION =
-            "This is a CODE conversation, but you returned an implementation without changing the project. "
-                    + "Apply the requested code with the file tools, verify it when possible, and then summarize. "
-                    + "Do not return the implementation only as a code block.";
-    private static final String PLAN_INCOMPLETE_CORRECTION =
-            "You attempted to finish while the public execution plan still has runnable steps. Continue the ReAct "
-                    + "process, obtain real tool evidence, and use update_plan to keep every step status accurate. "
-                    + "Do not claim a step is complete without successful non-plan tool evidence.";
 
+    /** 负责发送普通及流式模型请求的 DeepSeek 客户端。 */
     private final DeepSeekClient deepSeekClient;
+    /** 向模型公开当前可用工具定义的注册表。 */
     private final ToolRegistry toolRegistry;
+    /** 校验并执行模型工具调用的统一执行器。 */
     private final ToolExecutor toolExecutor;
+    /** Agent 迭代次数、单轮工具数和轨迹长度边界。 */
     private final AgentLoopProperties properties;
+    /** 为系统提示词提供不含敏感路径的宿主环境能力摘要。 */
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
+    /** 在候选答案结束前执行独立审查的 Reflection 服务。 */
     private final ReflectionReviewer reflectionReviewer;
+    /** Reflection 轮数和输入字符预算。 */
     private final ReflectionProperties reflectionProperties;
+    /** 在规划前采集有界项目结构和描述文件的感知服务。 */
     private final ProjectSnapshotProvider projectSnapshotProvider;
+    /** 根据任务、历史和项目快照生成初始实施计划。 */
     private final PlanningService planningService;
+    /** Planning 开关、步骤数量及项目快照边界。 */
     private final PlanningProperties planningProperties;
+    /** 审批 update_plan 请求并绑定真实工具证据的计划状态机。 */
     private final PlanCoordinator planCoordinator;
 
     /**
@@ -115,7 +120,7 @@ public class AgentLoop {
      * 携带已有对话历史执行任务，直到得到最终回答或触发安全边界。
      *
      * @param task 当前用户任务
-     * @param conversationHistory 仅包含 user 和 assistant 消息的历史上下文
+     * @param conversationHistory 可包含前置滚动摘要 system 消息及最近 user/assistant 轮次
      * @return Agent 执行结果和完整工具轨迹
      */
     public AgentRunResult run(String task, List<DeepSeekMessage> conversationHistory) {
@@ -144,7 +149,7 @@ public class AgentLoop {
      * 执行不附带工作空间的纯对话，不向模型提供任何本地工具。
      *
      * @param task 当前用户问题
-     * @param conversationHistory user 和 assistant 历史消息
+     * @param conversationHistory 可包含前置滚动摘要的历史消息
      * @param observer 公开执行阶段观察器
      * @param cancellation 协作式取消信号
      * @return 不包含工具调用的 Agent 执行结果
@@ -202,7 +207,7 @@ public class AgentLoop {
         }
 
         List<DeepSeekMessage> messages = new ArrayList<>();
-        messages.add(DeepSeekMessage.system(systemPrompt(toolsEnabled, plan)));
+        messages.add(DeepSeekMessage.system(systemPrompt(toolsEnabled, plan, task)));
         messages.addAll(safeHistory);
         messages.add(DeepSeekMessage.user(task));
         List<AgentRunResult.ToolStep> toolSteps = new ArrayList<>();
@@ -211,6 +216,7 @@ public class AgentLoop {
         String model = null;
         boolean applyCodeCorrectionIssued = false;
         boolean planIncompleteCorrectionIssued = false;
+        boolean languageCorrectionIssued = false;
         int reflectionRounds = 0;
         int reflectionRevisions = 0;
 
@@ -257,7 +263,10 @@ public class AgentLoop {
             if (!toolCalls.isEmpty() && assistant.content() != null && !assistant.content().isBlank()) {
                 safeObserver.onAnswerReset(iteration);
                 if (toolsEnabled) {
-                    safeObserver.onThought(iteration, truncate(assistant.content()).value());
+                    String publicThought = ResponseLanguagePolicy.requiresChineseRewrite(task, assistant.content())
+                            ? publicProgressSummary(iteration, true, toolSteps)
+                            : truncate(assistant.content()).value();
+                    safeObserver.onThought(iteration, publicThought);
                 }
             }
             safeObserver.onModelResponse(iteration, model, toolCalls.size());
@@ -277,13 +286,23 @@ public class AgentLoop {
             }
             if (toolCalls.isEmpty()) {
                 String answer = assistant.content();
+                if (!languageCorrectionIssued
+                        && ResponseLanguagePolicy.requiresChineseRewrite(task, answer)) {
+                    languageCorrectionIssued = true;
+                    safeObserver.onAnswerReset(iteration);
+                    messages.add(DeepSeekMessage.user(
+                            "请保留事实、代码、命令和路径不变，将面向用户的说明改写为简体中文。"
+                                    + "只需继续完成当前任务，不要解释这条语言纠正要求。"
+                    ));
+                    continue;
+                }
                 if (toolsEnabled
                         && !applyCodeCorrectionIssued
                         && containsCodeBlock(answer)
                         && !hasSuccessfulMutation(toolSteps)) {
                     applyCodeCorrectionIssued = true;
                     safeObserver.onAnswerReset(iteration);
-                    messages.add(DeepSeekMessage.user(APPLY_CODE_CORRECTION));
+                    messages.add(DeepSeekMessage.user(applyCodeCorrection(task)));
                     continue;
                 }
                 boolean completed = answer != null && !answer.isBlank();
@@ -293,7 +312,7 @@ public class AgentLoop {
                             planIncompleteCorrectionIssued = true;
                             safeObserver.onAnswerReset(iteration);
                             messages.add(DeepSeekMessage.user(
-                                    PLAN_INCOMPLETE_CORRECTION + "\n\nCurrent plan:\n" + plan.toPrompt()
+                                    planIncompleteCorrection(task) + "\n\nCurrent plan:\n" + plan.toPrompt()
                             ));
                             continue;
                         }
@@ -353,7 +372,9 @@ public class AgentLoop {
                             plan = planCoordinator.reopenLastStepForRevision(plan, toolSteps.size());
                             safeObserver.onPlanUpdated(plan, "反思发现问题，重新打开最终步骤");
                         }
-                        String revisionInstruction = feedback.revisionInstruction();
+                        String revisionInstruction = feedback.revisionInstruction(
+                                ResponseLanguagePolicy.prefersChinese(task)
+                        );
                         if (plan != null) {
                             revisionInstruction += "\n\nUpdated plan after review:\n" + plan.toPrompt();
                         }
@@ -490,10 +511,22 @@ public class AgentLoop {
             return List.of();
         }
         List<DeepSeekMessage> safeHistory = List.copyOf(history);
-        boolean containsUnsupportedRole = safeHistory.stream().anyMatch(message -> message == null
-                || !("user".equals(message.role()) || "assistant".equals(message.role())));
-        if (containsUnsupportedRole) {
-            throw new IllegalArgumentException("conversation history may only contain user and assistant messages");
+        boolean conversationStarted = false;
+        for (DeepSeekMessage message : safeHistory) {
+            if (message == null) {
+                throw new IllegalArgumentException("conversation history must not contain null messages");
+            }
+            if ("system".equals(message.role())) {
+                if (conversationStarted) {
+                    throw new IllegalArgumentException("conversation memory system messages must precede conversation turns");
+                }
+            } else if ("user".equals(message.role()) || "assistant".equals(message.role())) {
+                conversationStarted = true;
+            } else {
+                throw new IllegalArgumentException(
+                        "conversation history may only contain system memory, user, and assistant messages"
+                );
+            }
         }
         return safeHistory;
     }
@@ -593,13 +626,16 @@ public class AgentLoop {
      * 在工具会话中附加真实环境能力，避免模型反复调用不存在的编译器。
      *
      * @param toolsEnabled 是否启用工作空间工具
+     * @param plan 可选公开实施计划
+     * @param task 当前用户任务，用于确定回复语言
      * @return 纯聊天或带环境摘要的系统提示词
      */
-    private String systemPrompt(boolean toolsEnabled, AgentPlan plan) {
+    private String systemPrompt(boolean toolsEnabled, AgentPlan plan, String task) {
         if (!toolsEnabled) {
-            return CHAT_ONLY_SYSTEM_PROMPT;
+            return CHAT_ONLY_SYSTEM_PROMPT + "\n\n" + ResponseLanguagePolicy.instructionFor(task);
         }
         StringBuilder prompt = new StringBuilder(properties.systemPrompt())
+                .append("\n\n").append(ResponseLanguagePolicy.instructionFor(task))
                 .append("\n\n").append(executionEnvironmentProvider.agentSummary());
         if (plan != null) {
             prompt.append("\n\nPUBLIC EXECUTION PLAN\n")
@@ -617,6 +653,38 @@ public class AgentLoop {
                     .append("answer, all steps must be COMPLETED or a genuine blocker must be recorded.");
         }
         return prompt.toString();
+    }
+
+    /**
+     * 构建要求模型真正修改工作区的内部纠正指令。
+     *
+     * @param task 当前用户任务，用于选择指令语言
+     * @return 与任务语言一致的代码落盘纠正指令
+     */
+    private static String applyCodeCorrection(String task) {
+        if (ResponseLanguagePolicy.prefersChinese(task)) {
+            return "这是编写项目会话，但你只返回了实现文本，没有修改项目。请使用文件工具完成代码修改，"
+                    + "在条件允许时进行验证，最后用中文简要总结。不要只返回代码块。";
+        }
+        return "This is a CODE conversation, but you returned an implementation without changing the project. "
+                + "Apply the requested code with the file tools, verify it when possible, and then summarize. "
+                + "Do not return the implementation only as a code block.";
+    }
+
+    /**
+     * 构建要求模型继续完成未结束计划步骤的内部纠正指令。
+     *
+     * @param task 当前用户任务，用于选择指令语言
+     * @return 与任务语言一致的计划未完成纠正指令
+     */
+    private static String planIncompleteCorrection(String task) {
+        if (ResponseLanguagePolicy.prefersChinese(task)) {
+            return "你在公开任务计划仍有可执行步骤时尝试结束。请继续 ReAct 循环，获取真实工具证据，"
+                    + "并使用 update_plan 准确更新所有步骤状态。没有成功的非计划工具证据时，不得声称步骤已完成。";
+        }
+        return "You attempted to finish while the public execution plan still has runnable steps. Continue the ReAct "
+                + "process, obtain real tool evidence, and use update_plan to keep every step status accurate. "
+                + "Do not claim a step is complete without successful non-plan tool evidence.";
     }
 
     /**
@@ -724,9 +792,16 @@ public class AgentLoop {
 
     /** 跨模型调用累计 Token 用量。 */
     private static final class UsageAccumulator {
+        /** 已累计的输入 Token 数。 */
         private long promptTokens;
+        /** 已累计的输出 Token 数。 */
         private long completionTokens;
+        /** 已累计的输入与输出 Token 总数。 */
         private long totalTokens;
+
+        /** 创建所有计数均为零的用量累加器。 */
+        private UsageAccumulator() {
+        }
 
         /**
          * 累加单次模型响应的用量。
@@ -742,7 +817,11 @@ public class AgentLoop {
             totalTokens += usage.totalTokens();
         }
 
-        /** @return 当前累计 Token 用量的不可变快照 */
+        /**
+         * 生成当前累计用量快照。
+         *
+         * @return 当前累计 Token 用量的不可变快照
+         */
         AgentRunResult.Usage snapshot() {
             return new AgentRunResult.Usage(promptTokens, completionTokens, totalTokens);
         }

@@ -39,15 +39,24 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class AgentRunService {
 
+    /** 记录后台任务执行和事件推送异常。 */
     private static final Logger LOGGER = LoggerFactory.getLogger(AgentRunService.class);
 
+    /** 创建会话并在正确工作区内执行 Agent 的领域服务。 */
     private final ConversationAgentService conversationAgentService;
+    /** 运行保留时间、数量和 SSE 边界配置。 */
     private final AgentRunProperties properties;
+    /** 保存已结束运行及完整工具轨迹的 H2 仓储。 */
     private final AgentRunHistoryRepository runHistoryRepository;
+    /** 每个后台任务使用一个虚拟线程的执行器。 */
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    /** 保护运行注册表及幂等索引的一致性监视器。 */
     private final Object registryMonitor = new Object();
+    /** 按运行 ID 保存尚在内存保留期内的可变状态。 */
     private final Map<String, RunState> runs = new HashMap<>();
+    /** 将客户端幂等请求 ID 映射到既有运行 ID。 */
     private final Map<String, String> requestRuns = new HashMap<>();
+    /** 保证同一会话同一时刻最多存在一个活动运行。 */
     private final Map<String, String> activeConversationRuns = new HashMap<>();
 
     /**
@@ -687,12 +696,22 @@ public class AgentRunService {
         }
     }
 
-    /** @return 指定轮次公开思考条目的稳定 ID */
+    /**
+     * 生成指定轮次公开思考条目的稳定 ID。
+     *
+     * @param iteration 从一开始的 ReAct 轮次
+     * @return 指定轮次公开思考条目的稳定 ID
+     */
     private static String thoughtEntryId(int iteration) {
         return "thought-" + iteration;
     }
 
-    /** @return 指定轮次结果检查条目的稳定 ID */
+    /**
+     * 生成指定轮次结果检查条目的稳定 ID。
+     *
+     * @param iteration 触发结果检查的 ReAct 轮次
+     * @return 指定轮次结果检查条目的稳定 ID
+     */
     private static String resultCheckEntryId(int iteration) {
         return "result-check-" + iteration;
     }
@@ -931,25 +950,45 @@ public class AgentRunService {
 
     /** 保存一个运行的可变内部状态，并通过同步快照隔离并发读写。 */
     private static final class RunState {
+        /** 保护本运行所有可变集合和状态字段的一致性监视器。 */
         private final Object monitor = new Object();
+        /** 服务端生成的运行 ID。 */
         private final String runId;
+        /** 客户端幂等请求 ID。 */
         private final String requestId;
+        /** 已完成会话解析但尚可排队执行的上下文。 */
         private final ConversationAgentService.PreparedConversation prepared;
+        /** 运行受理时间。 */
         private final Instant createdAt = Instant.now();
+        /** 跨线程可见的协作式取消标记。 */
         private final AtomicBoolean cancelRequested = new AtomicBoolean();
+        /** 用于新订阅者重放的有界 SSE 事件列表。 */
         private final List<AgentRunEvent> events = new ArrayList<>();
+        /** 已完成工具调用的受限轨迹。 */
         private final List<AgentRunResult.ToolStep> toolSteps = new ArrayList<>();
+        /** 主界面展示的有界公开过程记录。 */
         private final List<AgentRunResult.ProcessEntry> processTrace = new ArrayList<>();
+        /** 当前候选最终回答的流式聚合缓冲区。 */
         private final StringBuilder liveContent = new StringBuilder();
+        /** 当前仍连接的 SSE 订阅者。 */
         private final Set<SseEmitter> emitters = new LinkedHashSet<>();
+        /** 当前公开计划快照。 */
         private volatile AgentPlan plan;
+        /** 当前运行生命周期状态。 */
         private volatile AgentRunStatus status = AgentRunStatus.QUEUED;
+        /** 后台线程实际开始执行的时间。 */
         private volatile Instant startedAt;
+        /** 运行进入任一终态的时间。 */
         private volatile Instant finishedAt;
+        /** 最近进入的 ReAct 轮次。 */
         private volatile int currentIteration;
+        /** 成功完成后生成的最终 Agent 结果。 */
         private volatile AgentRunResult result;
+        /** 失败或取消时可公开的错误说明。 */
         private volatile String error;
+        /** 当前运行内严格递增的 SSE 事件序号。 */
         private volatile long sequence;
+        /** 后台执行任务句柄，用于响应取消请求。 */
         private volatile Future<?> future;
 
         /**
@@ -969,12 +1008,20 @@ public class AgentRunService {
             this.prepared = prepared;
         }
 
-        /** @return 已设置取消标记或当前线程中断时返回 {@code true} */
+        /**
+         * 判断运行是否已经收到协作式取消信号。
+         *
+         * @return 已设置取消标记或当前线程中断时返回 {@code true}
+         */
         private boolean isCancellationRequested() {
             return cancelRequested.get() || Thread.currentThread().isInterrupted();
         }
 
-        /** @throws AgentRunCancelledException 已请求取消时抛出 */
+        /**
+         * 在 Agent 边界检查取消状态并以领域异常中止运行。
+         *
+         * @throws AgentRunCancelledException 已请求取消时抛出
+         */
         private void cancelRequested() {
             if (isCancellationRequested()) {
                 throw new AgentRunCancelledException();
@@ -992,7 +1039,11 @@ public class AgentRunService {
             }
         }
 
-        /** @return 在状态监视器内生成的不可变一致快照 */
+        /**
+         * 在状态监视器内生成可供控制器读取的一致快照。
+         *
+         * @return 当前运行的不可变一致快照
+         */
         private AgentRunSnapshot snapshot() {
             synchronized (monitor) {
                 return new AgentRunSnapshot(

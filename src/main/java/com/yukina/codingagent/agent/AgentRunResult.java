@@ -105,15 +105,25 @@ public record AgentRunResult(
 
     /** Agent 循环的停止原因。 */
     public enum StopReason {
+        /** 已获得通过约束检查和 Reflection 的最终回答。 */
         COMPLETED,
+        /** 模型响应既没有文本也没有有效工具调用。 */
         EMPTY_RESPONSE,
+        /** 已达到配置的最大 ReAct 迭代次数。 */
         MAX_ITERATIONS,
+        /** 单轮模型请求的工具调用数超过安全边界。 */
         TOOL_CALL_LIMIT,
+        /** 模型返回了缺少 ID、函数名或参数的工具调用。 */
         INVALID_TOOL_CALL,
+        /** 模型重复了完全相同的确定性失败工具调用。 */
         REPEATED_TOOL_FAILURE,
+        /** 模型尝试结束时仍存在可继续执行的计划步骤。 */
         PLAN_INCOMPLETE,
+        /** 计划包含经真实失败证据确认的外部阻塞。 */
         PLAN_BLOCKED,
+        /** 最终回答流未正常结束，可能只有不完整文本。 */
         RESPONSE_TRUNCATED,
+        /** 模型使用非完成型停止原因终止生成。 */
         MODEL_STOPPED
     }
 
@@ -202,9 +212,13 @@ public record AgentRunResult(
 
     /** 主界面允许展示的公开工作阶段。 */
     public enum ProcessType {
+        /** 程序根据公开运行状态生成的思考摘要。 */
         THOUGHT,
+        /** 模型发起工具调用的行动。 */
         ACTION,
+        /** 工具执行完成后返回的受限结果。 */
         OBSERVATION,
+        /** Reflection 或计划证据形成的结果检查。 */
         RESULT_CHECK
     }
 }

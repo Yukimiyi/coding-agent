@@ -25,6 +25,7 @@ import java.util.Optional;
 @Repository
 public class ConversationRepository {
 
+    /** 访问 conversations 和 conversation_messages 表的 JDBC 模板。 */
     private final JdbcTemplate jdbcTemplate;
 
     /**
@@ -219,6 +220,31 @@ public class ConversationRepository {
         );
         Collections.reverse(messages);
         return messages;
+    }
+
+    /**
+     * 按时间正序查询摘要水位之后的成功消息。
+     *
+     * @param conversationId 会话 ID
+     * @param afterId 已经进入摘要的最后消息 ID；没有摘要时为零
+     * @param limit 单次最大读取数量
+     * @return 水位之后的成功用户和助手消息
+     */
+    public List<ConversationMessage> findSuccessfulMessagesAfter(
+            String conversationId,
+            long afterId,
+            int limit
+    ) {
+        return jdbcTemplate.query(
+                "SELECT id, conversation_id, role, content, status, created_at "
+                        + "FROM conversation_messages "
+                        + "WHERE conversation_id = ? AND status = 'SUCCESS' AND id > ? "
+                        + "ORDER BY id ASC LIMIT ?",
+                this::mapMessage,
+                conversationId,
+                afterId,
+                limit
+        );
     }
 
     /**

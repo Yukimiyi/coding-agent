@@ -28,7 +28,9 @@ import java.util.Map;
 @Component
 public class EditFileTool implements AgentTool {
 
+    /** 单次精确替换允许声明的最大出现次数。 */
     private static final int MAX_EXPECTED_REPLACEMENTS = 10_000;
+    /** 精确文件修改工具的稳定协议定义。 */
     private static final DeepSeekToolDefinition DEFINITION = DeepSeekToolDefinition.function(
             "edit_file",
             "Replace exact text in an existing UTF-8 workspace file. The file is changed only when old_text "
@@ -62,8 +64,11 @@ public class EditFileTool implements AgentTool {
             )
     );
 
+    /** 将相对路径约束在当前会话工作区内的解析器。 */
     private final WorkspacePathResolver pathResolver;
+    /** 文件读取和写入字节数安全上限。 */
     private final WorkspaceProperties properties;
+    /** 将修改结果序列化为工具 Observation JSON 的映射器。 */
     private final ObjectMapper objectMapper;
 
     /**

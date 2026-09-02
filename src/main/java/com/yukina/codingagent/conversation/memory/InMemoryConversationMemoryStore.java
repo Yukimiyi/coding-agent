@@ -18,8 +18,11 @@ import java.util.concurrent.ConcurrentMap;
 @Component
 public class InMemoryConversationMemoryStore implements ConversationMemoryStore {
 
+    /** 会话缓存容量和滑动过期配置。 */
     private final ConversationContextProperties properties;
+    /** 提供可测试的当前时间。 */
     private final Clock clock;
+    /** 以会话 ID 为键保存进程内热上下文。 */
     private final ConcurrentMap<String, Entry> entries = new ConcurrentHashMap<>();
 
     /**

@@ -23,10 +23,13 @@ import java.util.Set;
 @Component
 public class PlanCoordinator {
 
+    /** 发送给模型并用于内部路由的计划更新工具名称。 */
     public static final String TOOL_NAME = "update_plan";
+    /** 允许模型申请的外部阻塞原因码。 */
     private static final Set<String> BLOCK_REASON_CODES = Set.of(
             "ENVIRONMENT_MISSING", "MISSING_INPUT", "PERMISSION_DENIED", "SAFETY_RESTRICTION"
     );
+    /** 每类外部阻塞必须匹配的工具失败错误码。 */
     private static final Map<String, Set<String>> BLOCK_EVIDENCE_CODES = Map.of(
             "ENVIRONMENT_MISSING", Set.of("COMMAND_NOT_FOUND"),
             "MISSING_INPUT", Set.of("PATH_NOT_FOUND", "NOT_A_FILE"),
@@ -40,16 +43,26 @@ public class PlanCoordinator {
             )
     );
 
+    /** 解析模型参数并序列化结构化 Observation。 */
     private final ObjectMapper objectMapper;
+    /** 向模型公开的不可变 update_plan 工具定义。 */
     private final DeepSeekToolDefinition definition;
 
-    /** @param objectMapper update_plan 参数和 Observation JSON 转换器 */
+    /**
+     * 创建计划协调器并预构建工具定义。
+     *
+     * @param objectMapper update_plan 参数和 Observation JSON 转换器
+     */
     public PlanCoordinator(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
         this.definition = createDefinition();
     }
 
-    /** @return 可与工作区工具一同发送给模型的 update_plan 定义 */
+    /**
+     * 返回可与工作区工具一同发送给模型的 update_plan 定义。
+     *
+     * @return 不可变工具定义
+     */
     public DeepSeekToolDefinition definition() {
         return definition;
     }
@@ -59,6 +72,7 @@ public class PlanCoordinator {
      * 该操作不增删步骤，不属于动态重规划。
      *
      * @param current Reflection 前全部完成的计划
+     * @param evidenceFromToolStep 重新进入执行状态后的证据窗口起点
      * @return 最后一个完成步骤恢复为 IN_PROGRESS 的新计划
      */
     public AgentPlan reopenLastStepForRevision(AgentPlan current, int evidenceFromToolStep) {
@@ -220,7 +234,11 @@ public class PlanCoordinator {
         }
     }
 
-    /** @return update_plan 的 JSON Schema 定义 */
+    /**
+     * 创建 update_plan 的 JSON Schema 定义。
+     *
+     * @return 可直接发送给 DeepSeek 的工具定义
+     */
     private static DeepSeekToolDefinition createDefinition() {
         Map<String, Object> step = Map.of(
                 "type", "object",
@@ -277,7 +295,12 @@ public class PlanCoordinator {
         );
     }
 
-    /** @return 已按调用 ID 索引的工具证据 */
+    /**
+     * 按调用 ID 索引真实工具轨迹，同时保留轨迹位置。
+     *
+     * @param steps 当前运行已经产生的工具步骤
+     * @return 已按调用 ID 索引的工具证据
+     */
     private static Map<String, IndexedEvidence> indexEvidence(List<AgentRunResult.ToolStep> steps) {
         Map<String, IndexedEvidence> evidence = new HashMap<>();
         if (steps != null) {
@@ -291,7 +314,13 @@ public class PlanCoordinator {
         return evidence;
     }
 
-    /** @return 从单个步骤参数解析出的状态申请 */
+    /**
+     * 从模型提交的单个步骤参数解析状态申请。
+     *
+     * @param node 单个步骤 JSON 对象
+     * @return 规范化后的状态申请
+     * @throws IllegalArgumentException ID、状态或证据列表格式非法时抛出
+     */
     private static RequestedStep parseRequestedStep(JsonNode node) {
         String id = node.path("id").asText().trim();
         if (id.isBlank()) {
@@ -320,7 +349,13 @@ public class PlanCoordinator {
         );
     }
 
-    /** @return 非法转换的说明；合法时为 {@code null} */
+    /**
+     * 校验第一版静态计划允许的单步状态转换。
+     *
+     * @param current 当前状态
+     * @param next 模型申请的下一状态
+     * @return 非法转换的说明；合法时为 {@code null}
+     */
     private static String validateTransition(PlanStepStatus current, PlanStepStatus next) {
         if (current == next) {
             return null;
@@ -338,7 +373,16 @@ public class PlanCoordinator {
         };
     }
 
-    /** @return 从真实轨迹选择出的完成证据或拒绝原因 */
+    /**
+     * 从步骤证据窗口内选择尚未被其他步骤占用的成功工具证据。
+     *
+     * @param requestedIds 模型提供的可选候选调用 ID
+     * @param evidence 按调用 ID 索引的真实工具轨迹
+     * @param evidenceFromToolStep 当前步骤证据窗口起始下标
+     * @param evidenceType 当前步骤要求的证据类型
+     * @param usedEvidenceIds 已被先前步骤绑定的调用 ID，可被本方法更新
+     * @return 选出的完成证据或拒绝原因
+     */
     private static EvidenceSelection selectCompletionEvidence(
             List<String> requestedIds,
             Map<String, IndexedEvidence> evidence,
@@ -375,7 +419,15 @@ public class PlanCoordinator {
         return new EvidenceSelection(selected, null);
     }
 
-    /** @return 经错误码证据验证的 blocker 或拒绝原因 */
+    /**
+     * 使用证据窗口内的真实失败错误码验证外部阻塞申请。
+     *
+     * @param requested 模型提交的阻塞状态和说明
+     * @param evidence 按调用 ID 索引的真实工具轨迹
+     * @param evidenceFromToolStep 当前步骤证据窗口起始下标
+     * @param usedEvidenceIds 已被先前步骤绑定的调用 ID，可被本方法更新
+     * @return 经错误码证据验证的 blocker 或拒绝原因
+     */
     private static BlockValidation validateBlocker(
             RequestedStep requested,
             Map<String, IndexedEvidence> evidence,
@@ -426,7 +478,14 @@ public class PlanCoordinator {
         );
     }
 
-    /** @return 成功的 update_plan Observation */
+    /**
+     * 创建成功的 update_plan Observation。
+     *
+     * @param callId 本次工具调用 ID
+     * @param plan 审批后的新计划
+     * @param summary 模型提供的公开进度摘要
+     * @return 可追加到模型上下文的成功结果
+     */
     private PlanUpdateResult success(String callId, AgentPlan plan, String summary) {
         try {
             String content = objectMapper.writeValueAsString(Map.of(
@@ -444,7 +503,15 @@ public class PlanCoordinator {
         }
     }
 
-    /** @return 被拒绝的 update_plan Observation，计划保持不变 */
+    /**
+     * 创建被拒绝的 update_plan Observation，计划保持不变。
+     *
+     * @param callId 本次工具调用 ID；调用结构非法时可能为空
+     * @param current 审批前且应继续使用的原计划
+     * @param code 稳定错误码
+     * @param message 面向模型的修正说明
+     * @return 包含结构化错误的工具结果
+     */
     private PlanUpdateResult failure(
             String callId,
             AgentPlan current,
@@ -467,7 +534,16 @@ public class PlanCoordinator {
         }
     }
 
-    /** AI 提出的单步状态、证据及可选阻塞信息。 */
+    /**
+     * AI 提出的单步状态、证据及可选阻塞信息。
+     *
+     * @param id 初始计划分配的稳定步骤 ID
+     * @param status AI 申请的新步骤状态
+     * @param evidenceIds AI 提示的候选工具调用 ID
+     * @param reasonCode 可选阻塞原因码
+     * @param reason 可选状态变更原因
+     * @param resolution 可选阻塞解除方式
+     */
     private record RequestedStep(
             String id,
             PlanStepStatus status,
@@ -478,15 +554,30 @@ public class PlanCoordinator {
     ) {
     }
 
-    /** 从真实工具轨迹选择的证据，以及选择失败时的原因。 */
+    /**
+     * 从真实工具轨迹选择的证据，以及选择失败时的原因。
+     *
+     * @param evidenceIds 与步骤类型和作用域匹配的工具调用 ID
+     * @param error 无法选择有效证据时的拒绝说明
+     */
     private record EvidenceSelection(List<String> evidenceIds, String error) {
     }
 
-    /** 阻塞验证结果。 */
+    /**
+     * 阻塞验证结果。
+     *
+     * @param blocker 经失败工具证据确认的阻塞信息
+     * @param error 阻塞条件不成立时的拒绝说明
+     */
     private record BlockValidation(PlanBlocker blocker, String error) {
     }
 
-    /** 带工具轨迹下标的真实证据。 */
+    /**
+     * 带工具轨迹下标的真实证据。
+     *
+     * @param index 工具调用在完整运行轨迹中的零基下标
+     * @param step 已持久化的真实工具调用摘要
+     */
     private record IndexedEvidence(int index, AgentRunResult.ToolStep step) {
     }
 }

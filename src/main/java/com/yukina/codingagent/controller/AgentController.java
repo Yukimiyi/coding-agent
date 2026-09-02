@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/agent")
 public class AgentController {
 
+    /** 同步执行有状态 Agent 对话的领域服务。 */
     private final ConversationAgentService conversationAgentService;
 
     /**

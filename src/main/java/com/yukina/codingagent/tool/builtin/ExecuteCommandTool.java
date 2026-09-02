@@ -42,6 +42,7 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class ExecuteCommandTool implements AgentTool {
 
+    /** 允许子进程从服务进程继承的最小环境变量集合。 */
     private static final Set<String> SAFE_ENVIRONMENT_VARIABLES = Set.of(
             "COMSPEC",
             "HOME",
@@ -55,6 +56,7 @@ public class ExecuteCommandTool implements AgentTool {
             "TMP",
             "USERPROFILE"
     );
+    /** 不会修改仓库状态的 Git 子命令白名单。 */
     private static final Set<String> READ_ONLY_GIT_SUBCOMMANDS = Set.of(
             "branch",
             "diff",
@@ -65,11 +67,13 @@ public class ExecuteCommandTool implements AgentTool {
             "show",
             "status"
     );
+    /** 解释器中可绕过工作区文件审计的内联代码参数。 */
     private static final Map<String, Set<String>> FORBIDDEN_INLINE_CODE_FLAGS = Map.of(
             "python", Set.of("-c"),
             "python3", Set.of("-c"),
             "node", Set.of("-e", "--eval", "-p", "--print")
     );
+    /** 向模型公开的命令执行参数协议。 */
     private static final DeepSeekToolDefinition DEFINITION = DeepSeekToolDefinition.function(
             "execute_command",
             "Execute an allowlisted build, test, or inspection command inside the workspace. "
@@ -109,8 +113,11 @@ public class ExecuteCommandTool implements AgentTool {
             )
     );
 
+    /** 约束工作目录、输入文件及工作区程序路径。 */
     private final WorkspacePathResolver pathResolver;
+    /** 提供命令白名单、超时、输入输出和参数数量限制。 */
     private final CommandProperties properties;
+    /** 解析兼容命令数组并序列化执行结果。 */
     private final ObjectMapper objectMapper;
 
     /**

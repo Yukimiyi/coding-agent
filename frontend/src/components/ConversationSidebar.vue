@@ -14,6 +14,7 @@ const props = defineProps({
 defineEmits(['close', 'new-chat', 'new-code', 'select', 'rename', 'delete'])
 
 const query = ref('')
+/** 按标题执行不区分大小写的本地会话过滤。 */
 const filteredConversations = computed(() => {
   const normalized = query.value.trim().toLocaleLowerCase('zh-CN')
   return normalized
@@ -22,7 +23,12 @@ const filteredConversations = computed(() => {
 })
 const relativeTimeFormatter = new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' })
 
-/** @returns {string} 中文相对时间。 */
+/**
+ * 将会话更新时间转换为便于扫描的中文相对时间。
+ *
+ * @param {string|number|Date} value 可由 Date 解析的时间值。
+ * @returns {string} 中文相对时间。
+ */
 function formatRelativeTime(value) {
   const deltaSeconds = Math.round((new Date(value).getTime() - Date.now()) / 1000)
   const ranges = [['year', 31_536_000], ['month', 2_592_000], ['day', 86_400], ['hour', 3_600], ['minute', 60]]

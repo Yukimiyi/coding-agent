@@ -18,6 +18,7 @@ import java.util.Comparator;
 @Service
 public class ConversationWorkspaceService {
 
+    /** 应用托管的会话、上传暂存和运行数据根目录。 */
     private final Path storageRoot;
 
     /**
@@ -29,7 +30,11 @@ public class ConversationWorkspaceService {
         this.storageRoot = properties.storageRoot().toAbsolutePath().normalize();
     }
 
-    /** @throws ConversationWorkspaceException 托管根目录无法创建时抛出 */
+    /**
+     * 创建正式会话目录和内部上传暂存目录。
+     *
+     * @throws ConversationWorkspaceException 托管根目录无法创建时抛出
+     */
     @PostConstruct
     public void initialize() {
         try {
@@ -108,7 +113,11 @@ public class ConversationWorkspaceService {
         }
     }
 
-    /** @return 上传请求使用的暂存根目录 */
+    /**
+     * 返回上传请求使用的内部暂存根目录。
+     *
+     * @return 上传请求使用的暂存根目录
+     */
     Path importsRoot() {
         return storageRoot.resolve("imports");
     }
@@ -124,6 +133,13 @@ public class ConversationWorkspaceService {
         }
     }
 
+    /**
+     * 将不可信会话 ID 映射到直接受托管根目录约束的目录。
+     *
+     * @param conversationId 待映射会话 ID
+     * @return 会话内部根目录，不包含 workspace 后缀
+     * @throws IllegalArgumentException 会话 ID 为空或包含路径分隔符时抛出
+     */
     private Path conversationPath(String conversationId) {
         if (conversationId == null || conversationId.isBlank()
                 || conversationId.contains("/") || conversationId.contains("\\")) {
@@ -136,6 +152,12 @@ public class ConversationWorkspaceService {
         return path;
     }
 
+    /**
+     * 计算会话正式项目目录的规范化路径。
+     *
+     * @param conversationId 已验证或待验证的会话 ID
+     * @return 以 workspace 结尾的托管项目路径
+     */
     private Path workspacePath(String conversationId) {
         return conversationPath(conversationId).resolve("workspace").normalize();
     }

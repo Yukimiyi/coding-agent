@@ -32,8 +32,11 @@ import java.util.List;
 @RequestMapping("/conversations/{conversationId}")
 public class ConversationContentController {
 
+    /** 查询并校验会话模式的领域服务。 */
     private final ConversationService conversationService;
+    /** 将上传文件或粘贴源码提交到会话正式目录的服务。 */
     private final ConversationFileImportService importService;
+    /** 将会话正式项目生成下载 ZIP 的服务。 */
     private final ConversationArchiveService archiveService;
 
     /**
@@ -114,7 +117,12 @@ public class ConversationContentController {
                 .body(body);
     }
 
-    /** @param path 项目相对路径 @param content UTF-8 源码 */
+    /**
+     * 从对话框粘贴到 CODE 会话工作区的单个源码文件。
+     *
+     * @param path 项目相对路径
+     * @param content UTF-8 源码
+     */
     public record PasteCodeRequest(String path, String content) {
     }
 }

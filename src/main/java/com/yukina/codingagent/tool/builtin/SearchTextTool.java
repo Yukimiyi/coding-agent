@@ -40,7 +40,9 @@ import java.util.regex.PatternSyntaxException;
 @Component
 public class SearchTextTool implements AgentTool {
 
+    /** 单条搜索结果允许返回的最大文本长度。 */
     private static final int MAX_LINE_LENGTH = 500;
+    /** 向模型公开的文本搜索参数协议。 */
     private static final DeepSeekToolDefinition DEFINITION = DeepSeekToolDefinition.function(
             "search_text",
             "Search UTF-8 workspace files for text or a regular expression without following symbolic links.",
@@ -60,8 +62,11 @@ public class SearchTextTool implements AgentTool {
             )
     );
 
+    /** 将搜索根目录和结果路径限制在当前工作空间。 */
     private final WorkspacePathResolver pathResolver;
+    /** 提供遍历深度、文件大小和结果数量限制。 */
     private final WorkspaceProperties properties;
+    /** 将搜索结果序列化为工具 Observation。 */
     private final ObjectMapper objectMapper;
 
     /**

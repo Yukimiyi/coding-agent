@@ -14,7 +14,9 @@ import java.util.Optional;
 @Component
 public class ToolRegistry {
 
+    /** 以 function 名称为键保存的不可变工具实现映射。 */
     private final Map<String, AgentTool> tools;
+    /** 按注册顺序预生成、可直接发送给模型的工具定义。 */
     private final List<DeepSeekToolDefinition> definitions;
 
     /**
@@ -51,7 +53,11 @@ public class ToolRegistry {
         return Optional.ofNullable(tools.get(name));
     }
 
-    /** @return 按注册顺序生成的不可变工具定义列表 */
+    /**
+     * 返回按注册顺序生成的不可变工具定义列表。
+     *
+     * @return 所有已注册工具的协议定义
+     */
     public List<DeepSeekToolDefinition> definitions() {
         return definitions;
     }

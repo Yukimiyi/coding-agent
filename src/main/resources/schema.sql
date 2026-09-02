@@ -20,6 +20,15 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
         FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS conversation_summaries (
+    conversation_id VARCHAR(36) PRIMARY KEY,
+    summary CLOB NOT NULL,
+    last_message_id BIGINT NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    CONSTRAINT fk_conversation_summary
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS agent_runs (
     run_id VARCHAR(36) PRIMARY KEY,
     request_id VARCHAR(100) NOT NULL,

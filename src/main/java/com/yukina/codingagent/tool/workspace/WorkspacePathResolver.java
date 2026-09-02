@@ -16,6 +16,7 @@ import java.nio.file.Path;
 @Component
 public class WorkspacePathResolver {
 
+    /** 提供当前 Agent 运行绑定的真实工作空间根目录。 */
     private final WorkspaceExecutionContext executionContext;
 
     /**
@@ -37,7 +38,11 @@ public class WorkspacePathResolver {
         this(new WorkspaceExecutionContext(properties));
     }
 
-    /** @return 当前运行绑定的真实工作空间根目录 */
+    /**
+     * 返回当前运行绑定的真实工作空间根目录。
+     *
+     * @return 当前会话目录，或没有运行绑定时的默认目录
+     */
     public Path root() {
         return executionContext.root();
     }

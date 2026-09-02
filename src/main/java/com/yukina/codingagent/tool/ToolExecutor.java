@@ -16,7 +16,9 @@ import java.util.Map;
 @Component
 public class ToolExecutor {
 
+    /** 按模型请求的名称定位唯一工具实现。 */
     private final ToolRegistry registry;
+    /** 解析工具参数并序列化统一错误结构。 */
     private final ObjectMapper objectMapper;
 
     /**

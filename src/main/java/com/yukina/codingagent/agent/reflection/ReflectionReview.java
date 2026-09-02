@@ -13,7 +13,11 @@ public record ReflectionReview(
         DeepSeekChatResponse.Usage usage
 ) {
 
-    /** @throws IllegalArgumentException feedback 为空时抛出 */
+    /**
+     * 校验反思反馈并保留关联模型用量。
+     *
+     * @throws IllegalArgumentException feedback 为空时抛出
+     */
     public ReflectionReview {
         if (feedback == null) {
             throw new IllegalArgumentException("reflection feedback must not be null");

@@ -26,11 +26,14 @@ import java.util.zip.ZipOutputStream;
 @Service
 public class ConversationArchiveService {
 
+    /** 下载时忽略的版本库、IDE 配置和可再生依赖/构建目录。 */
     private static final Set<String> EXCLUDED_DIRECTORIES = Set.of(
             ".git", ".gradle", ".idea", "node_modules", "out", "target"
     );
 
+    /** 定位会话正式项目目录的服务。 */
     private final ConversationWorkspaceService workspaceService;
+    /** 防止打包期间项目被同一会话任务并发修改的锁。 */
     private final ConversationLockManager lockManager;
 
     /**
@@ -73,6 +76,13 @@ public class ConversationArchiveService {
         return (safeName.isBlank() ? "project" : safeName) + ".zip";
     }
 
+    /**
+     * 在已持有会话锁时收集并写入正式项目文件。
+     *
+     * @param conversation 目标 CODE 会话
+     * @param outputStream ZIP 输出目标
+     * @throws ConversationWorkspaceException 文件越界或归档写入失败时抛出
+     */
     private void writeLocked(Conversation conversation, OutputStream outputStream) {
         Path root = workspaceService.root(conversation);
         List<Path> files = collectFiles(root);
@@ -94,6 +104,13 @@ public class ConversationArchiveService {
         }
     }
 
+    /**
+     * 递归收集可交付文件，跳过符号链接和可再生目录。
+     *
+     * @param root 会话正式项目根目录
+     * @return 按可移植相对路径排序的文件列表
+     * @throws ConversationWorkspaceException 遍历目录失败时抛出
+     */
     private static List<Path> collectFiles(Path root) {
         List<Path> files = new ArrayList<>();
         try {
@@ -122,11 +139,23 @@ public class ConversationArchiveService {
         }
     }
 
+    /**
+     * 判断目录是否属于下载归档排除范围。
+     *
+     * @param directory 待判断目录
+     * @return 目录名位于排除集合时返回 {@code true}
+     */
     private static boolean excluded(Path directory) {
         Path name = directory.getFileName();
         return name != null && EXCLUDED_DIRECTORIES.contains(name.toString().toLowerCase(Locale.ROOT));
     }
 
+    /**
+     * 将平台路径转换为 ZIP 规范使用的正斜杠路径。
+     *
+     * @param path 待转换路径
+     * @return 使用正斜杠的可移植路径
+     */
     private static String portable(Path path) {
         return path.toString().replace('\\', '/');
     }

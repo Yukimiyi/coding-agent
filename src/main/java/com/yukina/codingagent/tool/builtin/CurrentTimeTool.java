@@ -19,6 +19,7 @@ import java.util.Map;
 @Component
 public class CurrentTimeTool implements AgentTool {
 
+    /** 无参数当前时间工具的稳定协议定义。 */
     private static final DeepSeekToolDefinition DEFINITION = DeepSeekToolDefinition.function(
             "get_current_time",
             "Get the current local date, time, and time zone.",
@@ -29,6 +30,7 @@ public class CurrentTimeTool implements AgentTool {
             )
     );
 
+    /** 将时间字段序列化为工具 Observation JSON 的映射器。 */
     private final ObjectMapper objectMapper;
 
     /**
@@ -40,7 +42,11 @@ public class CurrentTimeTool implements AgentTool {
         this.objectMapper = objectMapper;
     }
 
-    /** @return {@code get_current_time} 工具协议定义 */
+    /**
+     * 返回当前时间工具协议定义。
+     *
+     * @return {@code get_current_time} 工具协议定义
+     */
     @Override
     public DeepSeekToolDefinition definition() {
         return DEFINITION;

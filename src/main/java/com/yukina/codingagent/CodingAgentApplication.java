@@ -11,6 +11,10 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 @ConfigurationPropertiesScan
 public class CodingAgentApplication {
 
+    /** 创建 Spring Boot 配置入口实例。 */
+    public CodingAgentApplication() {
+    }
+
     /**
      * 启动应用并初始化 HTTP 接口、Agent、工具和会话组件。
      *

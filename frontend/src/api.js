@@ -71,24 +71,37 @@ export const agentApi = {
     return response.ok && (await response.text()) === 'ok'
   },
 
-  /** @returns {Promise<object>} 环境能力快照。 */
+  /**
+   * @param {string|null} [conversationId=null] 可选 CODE 会话 ID。
+   * @returns {Promise<object>} 缓存的环境能力快照。
+   */
   getEnvironment(conversationId = null) {
     const query = conversationId ? `?${new URLSearchParams({ conversationId })}` : ''
     return request(`/environment${query}`)
   },
 
-  /** @returns {Promise<object>} 刷新后的环境能力快照。 */
+  /**
+   * @param {string|null} [conversationId=null] 可选 CODE 会话 ID。
+   * @returns {Promise<object>} 强制探测后的环境能力快照。
+   */
   refreshEnvironment(conversationId = null) {
     const query = conversationId ? `?${new URLSearchParams({ conversationId })}` : ''
     return request(`/environment/refresh${query}`, { method: 'POST' })
   },
 
-  /** @returns {Promise<object[]>} 最近会话。 */
+  /**
+   * @param {number} [limit=100] 最大返回会话数。
+   * @returns {Promise<object[]>} 按更新时间倒序排列的最近会话。
+   */
   listConversations(limit = 100) {
     return request(`/conversations?${new URLSearchParams({ limit: String(limit) })}`)
   },
 
-  /** @returns {Promise<object>} 新建 CHAT 或 CODE 会话。 */
+  /**
+   * @param {'CHAT'|'CODE'} mode 会话模式。
+   * @param {string} [title=''] 可选初始标题。
+   * @returns {Promise<object>} 新建会话。
+   */
   createConversation(mode, title = '') {
     return request('/conversations', {
       method: 'POST',
@@ -96,7 +109,11 @@ export const agentApi = {
     })
   },
 
-  /** @returns {Promise<object>} 文件导入摘要。 */
+  /**
+   * @param {string} conversationId CODE 会话 ID。
+   * @param {File[]} files 浏览器选择的文件列表。
+   * @returns {Promise<object>} 文件导入摘要。
+   */
   uploadConversationFiles(conversationId, files) {
     const body = new FormData()
     files.forEach((file) => {
@@ -106,24 +123,42 @@ export const agentApi = {
     return request(`/conversations/${conversationId}/files`, { method: 'POST', body })
   },
 
-  /** @returns {Promise<void>} 浏览器下载触发后完成。 */
+  /**
+   * @param {string} conversationId CODE 会话 ID。
+   * @param {string} title 用作下载文件名的会话标题。
+   * @returns {Promise<void>} 浏览器下载触发后完成。
+   */
   downloadConversation(conversationId, title) {
     return download(`/conversations/${conversationId}/archive`, title)
   },
 
-  /** @returns {Promise<object>} 分页消息。 */
+  /**
+   * @param {string} conversationId 会话 ID。
+   * @param {number|null} [beforeId=null] 向前翻页游标。
+   * @param {number} [limit=50] 单页消息上限。
+   * @returns {Promise<object>} 包含消息、下一游标和更多标记的分页结果。
+   */
   getMessages(conversationId, beforeId = null, limit = 50) {
     const params = new URLSearchParams({ limit: String(limit) })
     if (beforeId) params.set('beforeId', String(beforeId))
     return request(`/conversations/${conversationId}/messages?${params}`)
   },
 
-  /** @returns {Promise<object|null>} 最近终态运行。 */
+  /**
+   * @param {string} conversationId 会话 ID。
+   * @returns {Promise<object|null>} 最近终态运行；不存在时为 `null`。
+   */
   getLatestRun(conversationId) {
     return request(`/conversations/${conversationId}/latest-run`)
   },
 
-  /** @returns {Promise<object>} 异步运行受理结果。 */
+  /**
+   * @param {string} requestId 客户端幂等请求 ID。
+   * @param {string} conversationId 会话 ID。
+   * @param {'CHAT'|'CODE'} mode 会话模式。
+   * @param {string} task 当前用户任务。
+   * @returns {Promise<object>} 包含 runId 和初始状态的异步运行受理结果。
+   */
   startRun(requestId, conversationId, mode, task) {
     return request('/agent/runs', {
       method: 'POST',
@@ -131,29 +166,40 @@ export const agentApi = {
     })
   },
 
-  /** @returns {Promise<object>} 运行快照。 */
+  /** @param {string} runId 运行 ID。 @returns {Promise<object>} 运行一致快照。 */
   getRun(runId) {
     return request(`/agent/runs/${runId}`)
   },
 
-  /** @returns {Promise<object|null>} 会话活跃运行。 */
+  /**
+   * @param {string} conversationId 会话 ID。
+   * @returns {Promise<object|null>} 会话活跃运行；没有时为 `null`。
+   */
   getActiveRun(conversationId) {
     return request(`/agent/runs/active?${new URLSearchParams({ conversationId })}`)
   },
 
-  /** @returns {Promise<object>} 取消后的运行快照。 */
+  /** @param {string} runId 运行 ID。 @returns {Promise<object>} 取消后的运行快照。 */
   cancelRun(runId) {
     return request(`/agent/runs/${runId}/cancel`, { method: 'POST' })
   },
 
-  /** @returns {string} SSE 订阅地址。 */
+  /**
+   * @param {string} runId 运行 ID。
+   * @param {number} [afterSequence=0] 已处理事件序号。
+   * @returns {string} 支持断点续传的 SSE 订阅地址。
+   */
   runEventsUrl(runId, afterSequence = 0) {
     const params = new URLSearchParams()
     if (afterSequence > 0) params.set('afterSequence', String(afterSequence))
     return `${API_BASE}/agent/runs/${runId}/events${params.size ? `?${params}` : ''}`
   },
 
-  /** @returns {Promise<object>} 更新后的会话。 */
+  /**
+   * @param {string} conversationId 会话 ID。
+   * @param {string} title 新标题。
+   * @returns {Promise<object>} 更新后的会话。
+   */
   renameConversation(conversationId, title) {
     return request(`/conversations/${conversationId}`, {
       method: 'PATCH',
@@ -161,7 +207,10 @@ export const agentApi = {
     })
   },
 
-  /** @returns {Promise<null>} 删除完成后返回 `null`。 */
+  /**
+   * @param {string} conversationId 会话 ID。
+   * @returns {Promise<null>} 删除完成后返回 `null`。
+   */
   deleteConversation(conversationId) {
     return request(`/conversations/${conversationId}`, { method: 'DELETE' })
   },

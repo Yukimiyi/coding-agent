@@ -29,6 +29,7 @@ import java.util.Map;
 @Component
 public class WriteFileTool implements AgentTool {
 
+    /** 向模型公开的文件写入参数协议。 */
     private static final DeepSeekToolDefinition DEFINITION = DeepSeekToolDefinition.function(
             "write_file",
             "Write complete UTF-8 text content to a workspace file. Set overwrite=true to replace an existing file.",
@@ -54,8 +55,11 @@ public class WriteFileTool implements AgentTool {
             )
     );
 
+    /** 解析安全的新文件或已有文件路径。 */
     private final WorkspacePathResolver pathResolver;
+    /** 提供单次写入字节上限。 */
     private final WorkspaceProperties properties;
+    /** 将写入结果序列化为工具 Observation。 */
     private final ObjectMapper objectMapper;
 
     /**

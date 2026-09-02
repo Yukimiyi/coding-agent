@@ -76,7 +76,15 @@ public record PlanStep(
         );
     }
 
-    /** @return 使用新状态和证据生成的不可变步骤 */
+    /**
+     * 使用新状态和证据生成不可变步骤，保留描述和验收条件。
+     *
+     * @param nextStatus 下一状态
+     * @param evidenceIds 支撑下一状态的工具调用 ID
+     * @param nextBlocker 阻塞详情；非 BLOCKED 状态应为 {@code null}
+     * @param nextEvidenceFromToolStep 新证据窗口起始下标
+     * @return 使用指定执行状态生成的新步骤
+     */
     public PlanStep withState(
             PlanStepStatus nextStatus,
             List<String> evidenceIds,

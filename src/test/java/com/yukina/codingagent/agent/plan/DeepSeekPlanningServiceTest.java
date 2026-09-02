@@ -98,12 +98,19 @@ class DeepSeekPlanningServiceTest {
         DeepSeekClient client = mock(DeepSeekClient.class);
         when(client.chat(anyList(), anyList())).thenReturn(response("bad"), response("still bad"));
 
-        PlanningResult result = service(client).createPlan("Create Main.java", List.of(), snapshot());
+        PlanningResult result = service(client).createPlan("创建 Main.java", List.of(), snapshot());
 
         assertTrue(result.fallbackUsed());
         assertEquals(1, result.plan().steps().size());
         assertEquals(PlanEvidenceType.GENERAL, result.plan().steps().getFirst().evidenceType());
+        assertEquals("完成用户要求的项目任务", result.plan().goal());
+        assertTrue(result.plan().steps().getFirst().verification().contains("工具执行结果"));
         assertTrue(result.notice().contains("兜底计划"));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DeepSeekMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(client, times(2)).chat(messages.capture(), anyList());
+        assertTrue(messages.getAllValues().getFirst().getFirst().content().contains("Simplified Chinese"));
     }
 
     /** 创建使用固定边界的 Planner 服务。 */

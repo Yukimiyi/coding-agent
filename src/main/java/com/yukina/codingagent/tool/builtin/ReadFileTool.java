@@ -26,6 +26,7 @@ import java.util.Map;
 @Component
 public class ReadFileTool implements AgentTool {
 
+    /** 向模型公开的文件读取参数协议。 */
     private static final DeepSeekToolDefinition DEFINITION = DeepSeekToolDefinition.function(
             "read_file",
             "Read a UTF-8 text file from the workspace. The path must be relative to the workspace root.",
@@ -42,8 +43,11 @@ public class ReadFileTool implements AgentTool {
             )
     );
 
+    /** 拒绝绝对路径、目录穿越及工作区外文件。 */
     private final WorkspacePathResolver pathResolver;
+    /** 提供单文件读取字节上限。 */
     private final WorkspaceProperties properties;
+    /** 将文件元数据和文本内容序列化为工具 Observation。 */
     private final ObjectMapper objectMapper;
 
     /**

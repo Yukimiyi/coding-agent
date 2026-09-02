@@ -32,6 +32,7 @@ import java.util.Map;
 @Component
 public class ListFilesTool implements AgentTool {
 
+    /** 向模型公开的目录遍历参数协议。 */
     private static final DeepSeekToolDefinition DEFINITION = DeepSeekToolDefinition.function(
             "list_files",
             "List files and directories in the workspace without following symbolic links.",
@@ -65,8 +66,11 @@ public class ListFilesTool implements AgentTool {
             )
     );
 
+    /** 将起始路径和返回路径限制在当前工作空间。 */
     private final WorkspacePathResolver pathResolver;
+    /** 提供目录深度及最大条目数量限制。 */
     private final WorkspaceProperties properties;
+    /** 将列表条目序列化为工具 Observation。 */
     private final ObjectMapper objectMapper;
 
     /**

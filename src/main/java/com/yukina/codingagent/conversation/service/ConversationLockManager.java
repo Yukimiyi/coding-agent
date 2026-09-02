@@ -14,7 +14,12 @@ import java.util.function.Supplier;
 @Component
 public class ConversationLockManager {
 
+    /** 按会话 ID 保存当前使用中的可重入锁。 */
     private final ConcurrentMap<String, ReentrantLock> locks = new ConcurrentHashMap<>();
+
+    /** 创建一个初始不包含任何会话锁的管理器。 */
+    public ConversationLockManager() {
+    }
 
     /**
      * 在会话专属锁内执行操作，并在无等待者时回收锁对象。

@@ -24,6 +24,7 @@ import java.util.Map;
 @Component
 public class DeleteFileTool implements AgentTool {
 
+    /** 受控单文件删除工具的稳定协议定义。 */
     private static final DeepSeekToolDefinition DEFINITION = DeepSeekToolDefinition.function(
             "delete_file",
             "Delete one regular file inside the workspace. Use this only for temporary files you created; "
@@ -41,7 +42,9 @@ public class DeleteFileTool implements AgentTool {
             )
     );
 
+    /** 将待删除路径约束在当前会话工作区内的解析器。 */
     private final WorkspacePathResolver pathResolver;
+    /** 将删除结果序列化为工具 Observation JSON 的映射器。 */
     private final ObjectMapper objectMapper;
 
     /**

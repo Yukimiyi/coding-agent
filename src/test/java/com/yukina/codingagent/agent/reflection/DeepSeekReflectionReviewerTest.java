@@ -38,7 +38,7 @@ class DeepSeekReflectionReviewerTest {
         );
 
         ReflectionReview review = reviewer.review(
-                "Fix the project",
+                "修复这个项目",
                 "Implemented the change.",
                 List.of(
                         step("write_file", true, "{\"path\":\"src/Main.java\"}", "written", null),
@@ -55,12 +55,14 @@ class DeepSeekReflectionReviewerTest {
 
         assertEquals(ReflectionFeedback.Verdict.REVISE, review.feedback().verdict());
         assertEquals(List.of("修复失败测试"), review.feedback().issues());
+        assertTrue(review.feedback().revisionInstruction(true).contains("用中文给出新的最终回答"));
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<DeepSeekMessage>> messages = ArgumentCaptor.forClass(List.class);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<DeepSeekToolDefinition>> tools = ArgumentCaptor.forClass(List.class);
         verify(client).chat(messages.capture(), tools.capture());
         assertTrue(tools.getValue().isEmpty());
+        assertTrue(messages.getValue().getFirst().content().contains("Simplified Chinese"));
         assertTrue(messages.getValue().get(1).content().contains("src/Main.java"));
         assertTrue(messages.getValue().get(1).content().contains("COMMAND_FAILED"));
     }

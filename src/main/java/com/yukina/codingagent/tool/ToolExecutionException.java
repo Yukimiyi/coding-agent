@@ -7,7 +7,9 @@ import java.util.Map;
  */
 public class ToolExecutionException extends RuntimeException {
 
+    /** 供 Agent 稳定识别失败类型的机器可读错误码。 */
     private final String code;
+    /** 可选且可安全序列化的恢复提示或边界信息。 */
     private final Map<String, Object> details;
 
     /**
@@ -33,12 +35,20 @@ public class ToolExecutionException extends RuntimeException {
         this.details = details == null ? Map.of() : Map.copyOf(details);
     }
 
-    /** @return 机器可读错误码 */
+    /**
+     * 返回机器可读错误码。
+     *
+     * @return 构造异常时指定的稳定错误码
+     */
     public String code() {
         return code;
     }
 
-    /** @return 不可变扩展错误字段 */
+    /**
+     * 返回不可变扩展错误字段。
+     *
+     * @return 可安全写入工具结果的扩展信息
+     */
     public Map<String, Object> details() {
         return details;
     }

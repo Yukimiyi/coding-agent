@@ -25,9 +25,13 @@ public record EnvironmentToolStatus(
 
     /** 命令来源，不暴露宿主机绝对路径。 */
     public enum Source {
+        /** 来自应用配置的优先搜索目录。 */
         CONFIGURED_PATH,
+        /** 来自当前进程继承的系统 PATH。 */
         SYSTEM_PATH,
+        /** 来自当前会话项目根目录的构建 Wrapper。 */
         PROJECT_WRAPPER,
+        /** 未找到、被白名单禁用或版本检测失败。 */
         UNAVAILABLE
     }
 }

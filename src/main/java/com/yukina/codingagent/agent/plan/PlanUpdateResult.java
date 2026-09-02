@@ -15,7 +15,11 @@ public record PlanUpdateResult(
         String summary
 ) {
 
-    /** @return 计划状态是否已被接受并更新 */
+    /**
+     * 判断协调器是否接受了本次状态变更。
+     *
+     * @return 计划状态已被接受并更新时返回 {@code true}
+     */
     public boolean success() {
         return executionResult != null && executionResult.success();
     }

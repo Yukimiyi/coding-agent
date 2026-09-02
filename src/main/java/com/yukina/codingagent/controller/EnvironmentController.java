@@ -19,8 +19,11 @@ import java.nio.file.Path;
 @RequestMapping("/environment")
 public class EnvironmentController {
 
+    /** 探测并缓存宿主机开发工具能力。 */
     private final EnvironmentProbeService environmentProbeService;
+    /** 校验环境查询所引用的会话。 */
     private final ConversationService conversationService;
+    /** 将 CODE 会话转换为受控工作目录。 */
     private final ConversationWorkspaceService workspaceService;
 
     /**

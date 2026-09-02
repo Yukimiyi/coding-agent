@@ -16,6 +16,7 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'refresh'])
 
+/** 当前环境快照中实际可供 Agent 使用的工具数量。 */
 const availableCount = computed(() =>
   props.snapshot?.tools?.filter((tool) => tool.available).length || 0,
 )

@@ -9,6 +9,7 @@ const props = defineProps({
 
 marked.setOptions({ breaks: true, gfm: true })
 
+/** 将 Markdown 转为 HTML，并在注入页面前移除不可信标签和属性。 */
 const renderedContent = computed(() => DOMPurify.sanitize(marked.parse(props.content)))
 </script>
 

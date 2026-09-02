@@ -19,10 +19,14 @@ import java.util.UUID;
 @Service
 public class ConversationService {
 
+    /** 会话标题允许保存的最大字符数。 */
     private static final int MAX_TITLE_LENGTH = 200;
 
+    /** 持久化会话和消息的仓储。 */
     private final ConversationRepository repository;
+    /** 清理已删除会话热上下文的管理器。 */
     private final ConversationContextManager contextManager;
+    /** 创建和删除 CODE 会话正式工作区的服务。 */
     private final ConversationWorkspaceService workspaceService;
 
     /**
@@ -151,6 +155,7 @@ public class ConversationService {
      * 压缩空白并限制标题长度，空标题使用默认值。
      *
      * @param title 原始标题
+     * @param mode 会话模式，用于选择空标题默认值
      * @return 规范化且不超过长度上限的标题
      */
     private static String normalizeTitle(String title, ConversationMode mode) {

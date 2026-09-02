@@ -25,6 +25,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @RequestMapping("/agent/runs")
 public class AgentRunController {
 
+    /** 提交、查询、订阅和取消后台运行的应用服务。 */
     private final AgentRunService agentRunService;
 
     /**

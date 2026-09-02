@@ -13,7 +13,9 @@ import java.util.function.Supplier;
 @Component
 public class WorkspaceExecutionContext {
 
+    /** 未绑定会话运行时使用的全局配置目录。 */
     private final Path defaultRoot;
+    /** 当前线程临时绑定的会话工作目录。 */
     private final ThreadLocal<Path> activeRoot = new ThreadLocal<>();
 
     /**

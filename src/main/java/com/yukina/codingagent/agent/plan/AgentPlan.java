@@ -33,17 +33,29 @@ public record AgentPlan(
         acceptanceCriteria = acceptanceCriteria == null ? List.of() : List.copyOf(acceptanceCriteria);
     }
 
-    /** @return 所有步骤均有真实证据并处于 COMPLETED 时返回 {@code true} */
+    /**
+     * 判断计划是否已经完整完成。
+     *
+     * @return 所有步骤均处于 COMPLETED 时返回 {@code true}
+     */
     public boolean allCompleted() {
         return steps.stream().allMatch(step -> step.status() == PlanStepStatus.COMPLETED);
     }
 
-    /** @return 至少一个步骤处于 BLOCKED 时返回 {@code true} */
+    /**
+     * 判断计划是否包含已确认阻塞步骤。
+     *
+     * @return 至少一个步骤处于 BLOCKED 时返回 {@code true}
+     */
     public boolean hasBlockedStep() {
         return steps.stream().anyMatch(step -> step.status() == PlanStepStatus.BLOCKED);
     }
 
-    /** @return 仍有可继续处理的 PENDING 或 IN_PROGRESS 步骤时返回 {@code true} */
+    /**
+     * 判断计划是否仍有可以继续执行的步骤。
+     *
+     * @return 仍有 PENDING 或 IN_PROGRESS 步骤时返回 {@code true}
+     */
     public boolean hasRunnableStep() {
         return steps.stream().anyMatch(step -> step.status() == PlanStepStatus.PENDING
                 || step.status() == PlanStepStatus.IN_PROGRESS);

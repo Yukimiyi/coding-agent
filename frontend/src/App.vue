@@ -45,6 +45,7 @@ let loadSequence = 0
 let eventSource = null
 const activeRunStorageKey = 'coding-agent-active-run'
 
+/** 当前选择的完整会话对象；没有选择时为 `null`。 */
 const activeConversation = computed(() =>
   conversations.value.find((conversation) => conversation.id === selectedConversationId.value) || null,
 )
@@ -60,7 +61,11 @@ onMounted(async () => {
 })
 onBeforeUnmount(closeRunEvents)
 
-/** @returns {Promise<void>} 更新服务在线状态。 */
+/**
+ * 请求健康检查并更新服务在线状态；网络异常按离线处理。
+ *
+ * @returns {Promise<void>} 检查完成后结束。
+ */
 async function checkHealth() {
   try {
     online.value = await agentApi.health()
@@ -69,7 +74,11 @@ async function checkHealth() {
   }
 }
 
-/** @returns {Promise<void>} 刷新最近会话及项目文件状态。 */
+/**
+ * 刷新最近会话及各 CODE 会话的项目文件状态。
+ *
+ * @returns {Promise<void>} 列表请求完成后结束。
+ */
 async function refreshConversations() {
   loadingConversations.value = true
   try {
@@ -81,7 +90,12 @@ async function refreshConversations() {
   }
 }
 
-/** @param {'CHAT'|'CODE'} mode 新会话模式。 */
+/**
+ * 创建指定模式的会话并立即选中。
+ *
+ * @param {'CHAT'|'CODE'} mode 新会话模式。
+ * @returns {Promise<void>} 会话创建和首次加载完成后结束。
+ */
 async function createConversation(mode) {
   if (busy.value) return
   errorMessage.value = ''
@@ -94,7 +108,12 @@ async function createConversation(mode) {
   }
 }
 
-/** @param {string} conversationId 目标会话 ID。 */
+/**
+ * 切换会话，清理旧运行视图并恢复目标会话的消息和运行轨迹。
+ *
+ * @param {string} conversationId 目标会话 ID。
+ * @returns {Promise<void>} 目标会话状态加载完成后结束。
+ */
 async function selectConversation(conversationId) {
   if (busy.value || conversationId === selectedConversationId.value) {
     sidebarOpen.value = false
@@ -116,7 +135,12 @@ async function selectConversation(conversationId) {
   }
 }
 
-/** @param {string} conversationId 会话 ID。 */
+/**
+ * 加载会话最新一页消息，并用序号避免较慢的旧请求覆盖新选择。
+ *
+ * @param {string} conversationId 会话 ID。
+ * @returns {Promise<void>} 分页状态更新完成后结束。
+ */
 async function loadMessages(conversationId) {
   const sequence = ++loadSequence
   loadingMessages.value = true
@@ -133,7 +157,11 @@ async function loadMessages(conversationId) {
   }
 }
 
-/** @returns {Promise<void>} 向前加载一页历史消息。 */
+/**
+ * 使用消息游标向前加载一页历史，并保持现有消息顺序。
+ *
+ * @returns {Promise<void>} 历史页合并完成后结束。
+ */
 async function loadOlderMessages() {
   if (!selectedConversationId.value || !hasMoreMessages.value || loadingOlder.value) return
   loadingOlder.value = true
@@ -149,7 +177,12 @@ async function loadOlderMessages() {
   }
 }
 
-/** @param {string} task 用户任务。 */
+/**
+ * 乐观追加用户消息，幂等创建异步 Agent 运行并连接实时事件。
+ *
+ * @param {string} task 用户输入的任务文本。
+ * @returns {Promise<void>} 运行被受理或提交失败后结束。
+ */
 async function submitTask(task) {
   const conversation = activeConversation.value
   const normalizedTask = task.trim()
@@ -203,7 +236,12 @@ async function submitTask(task) {
   }
 }
 
-/** @param {File[]} files 浏览器选择的项目文件。 */
+/**
+ * 将浏览器选择的文件导入当前 CODE 会话工作目录。
+ *
+ * @param {File[]} files 浏览器选择的项目文件。
+ * @returns {Promise<void>} 上传和会话状态刷新完成后结束。
+ */
 async function uploadFiles(files) {
   const conversation = activeConversation.value
   if (!conversation || conversation.mode !== 'CODE' || busy.value || uploading.value) return
@@ -219,7 +257,11 @@ async function uploadFiles(files) {
   }
 }
 
-/** @returns {Promise<void>} 下载 CODE 会话的完整项目。 */
+/**
+ * 下载当前 CODE 会话中可见项目文件组成的 ZIP。
+ *
+ * @returns {Promise<void>} 浏览器下载启动或失败后结束。
+ */
 async function downloadProject() {
   const conversation = activeConversation.value
   if (!conversation?.artifactAvailable || busy.value || downloading.value) return
@@ -233,13 +275,22 @@ async function downloadProject() {
   }
 }
 
-/** @returns {Promise<void>} 打开并加载开发环境快照。 */
+/**
+ * 打开环境对话框，并优先读取缓存的开发环境快照。
+ *
+ * @returns {Promise<void>} 首次快照加载完成后结束。
+ */
 async function openEnvironmentDialog() {
   environmentOpen.value = true
   await loadEnvironment(false)
 }
 
-/** @param {boolean} refresh 是否强制重新探测。 */
+/**
+ * 读取宿主环境能力，并在 CODE 会话中叠加项目 Wrapper 状态。
+ *
+ * @param {boolean} refresh 是否强制重新探测宿主程序版本。
+ * @returns {Promise<void>} 环境快照更新完成后结束。
+ */
 async function loadEnvironment(refresh) {
   if (loadingEnvironment.value) return
   loadingEnvironment.value = true
@@ -255,7 +306,12 @@ async function loadEnvironment(refresh) {
   }
 }
 
-/** @param {object} pendingRun 刷新前保存的运行定位信息。 */
+/**
+ * 从会话存储恢复刷新前运行；尚未拿到 runId 时使用 requestId 幂等重试提交。
+ *
+ * @param {object} pendingRun 刷新前保存的运行定位信息。
+ * @returns {Promise<void>} 快照恢复或降级清理完成后结束。
+ */
 async function restorePendingRun(pendingRun) {
   busy.value = true
   try {
@@ -278,7 +334,12 @@ async function restorePendingRun(pendingRun) {
   }
 }
 
-/** @returns {Promise<boolean>} 是否恢复了活跃运行。 */
+/**
+ * 查询并恢复指定会话在后端仍然活跃的运行。
+ *
+ * @param {string} conversationId 会话 ID。
+ * @returns {Promise<boolean>} 找到并恢复活跃运行时为 `true`。
+ */
 async function restoreConversationRun(conversationId) {
   if (!conversationId || busy.value) return false
   try {
@@ -297,7 +358,12 @@ async function restoreConversationRun(conversationId) {
   }
 }
 
-/** @returns {Promise<void>} 恢复最近终态工具轨迹。 */
+/**
+ * 加载会话最近一次终态运行，用于刷新后回看工具轨迹和执行记录。
+ *
+ * @param {string} conversationId 会话 ID。
+ * @returns {Promise<void>} 历史运行查询完成后结束；失败不影响消息展示。
+ */
 async function loadLatestRunTrace(conversationId) {
   try {
     const history = await agentApi.getLatestRun(conversationId)
@@ -308,7 +374,12 @@ async function loadLatestRunTrace(conversationId) {
   }
 }
 
-/** @param {object} accepted 运行受理结果。 */
+/**
+ * 将运行受理结果绑定到当前界面并进入忙碌状态。
+ *
+ * @param {object} accepted 包含 runId、conversationId 和初始状态的受理结果。
+ * @returns {void}
+ */
 function attachAcceptedRun(accepted) {
   activeRunId.value = accepted.runId
   selectedConversationId.value = accepted.conversationId
@@ -316,7 +387,12 @@ function attachAcceptedRun(accepted) {
   busy.value = true
 }
 
-/** @param {object} snapshot 运行一致快照。 */
+/**
+ * 应用运行一致快照，恢复消息后根据终态决定收敛或继续订阅 SSE。
+ *
+ * @param {object} snapshot 后端运行一致快照。
+ * @returns {Promise<void>} 快照、会话和订阅状态全部同步后结束。
+ */
 async function attachSnapshot(snapshot) {
   if (activeRunId.value !== snapshot.runId) resetLiveRunOutput()
   selectedConversationId.value = snapshot.conversationId
@@ -327,7 +403,13 @@ async function attachSnapshot(snapshot) {
   else connectRunEvents(snapshot.runId, snapshot.lastSequence || 0)
 }
 
-/** @param {string} runId 运行 ID。 @param {number} afterSequence 已处理事件序号。 */
+/**
+ * 订阅运行 SSE；连接中断时通过快照接口补偿可能遗漏的状态。
+ *
+ * @param {string} runId 运行 ID。
+ * @param {number} [afterSequence=0] 已处理事件序号，用于断点续传。
+ * @returns {void}
+ */
 function connectRunEvents(runId, afterSequence = 0) {
   closeRunEvents()
   eventSource = new EventSource(agentApi.runEventsUrl(runId, afterSequence))
@@ -350,7 +432,12 @@ function connectRunEvents(runId, afterSequence = 0) {
   }
 }
 
-/** @param {object} event 后端 SSE 事件。 */
+/**
+ * 按序处理 SSE 事件，并将计划、思考、行动、观察和回答增量映射到界面状态。
+ *
+ * @param {object} event 后端 SSE 事件。
+ * @returns {void}
+ */
 function handleRunEvent(event) {
   if (event.sequence && event.sequence <= lastProcessedRunSequence.value) return
   if (event.sequence) lastProcessedRunSequence.value = event.sequence
@@ -393,22 +480,40 @@ function handleRunEvent(event) {
   if (isTerminal(event.status)) finishRun(event)
 }
 
+/**
+ * 向公开过程轨迹追加一条活动，缺少 ID 时生成本地稳定 ID。
+ *
+ * @param {object} activity 思考、行动、观察或结果检查活动。
+ * @returns {void}
+ */
 function appendRunActivity(activity) {
   runActivities.value.push({ ...activity, id: activity.id || `${activity.type}-${runActivities.value.length + 1}` })
 }
 
-/** @param {object} activity 使用稳定 ID 新增或更新一条运行活动。 */
+/**
+ * 使用稳定 ID 新增或合并一条运行活动。
+ *
+ * @param {object} activity 包含稳定 ID 的运行活动。
+ * @returns {void}
+ */
 function upsertRunActivity(activity) {
   const index = runActivities.value.findIndex((item) => item.id === activity.id)
   if (index === -1) appendRunActivity(activity)
   else runActivities.value[index] = { ...runActivities.value[index], ...activity }
 }
+/** 清空仅属于当前运行的实时过程、计划和回答增量。 @returns {void} */
 function resetLiveRunOutput() {
   runActivities.value = []
   runPlan.value = null
   streamedAnswer.value = ''
   lastProcessedRunSequence.value = 0
 }
+/**
+ * 用后端一致快照覆盖可恢复运行状态。
+ *
+ * @param {object} snapshot 包含状态、序号、工具步骤和公开过程的运行快照。
+ * @returns {void}
+ */
 function applyRunSnapshot(snapshot) {
   activeRunId.value = snapshot.runId
   runStatus.value = snapshot.status
@@ -420,13 +525,23 @@ function applyRunSnapshot(snapshot) {
   streamedAnswer.value = snapshot.liveContent || snapshot.result?.answer || ''
   busy.value = !isTerminal(snapshot.status)
 }
+/**
+ * 按工具调用 ID 新增或替换一条工具轨迹。
+ *
+ * @param {object} step 后端返回的工具执行步骤。
+ * @returns {void}
+ */
 function upsertToolStep(step) {
   const index = toolSteps.value.findIndex((item) => item.toolCallId && item.toolCallId === step.toolCallId)
   if (index === -1) toolSteps.value.push(step)
   else toolSteps.value[index] = step
 }
 
-/** @returns {Promise<void>} 取消当前运行。 */
+/**
+ * 请求取消当前运行，并使用返回快照立即收敛界面状态。
+ *
+ * @returns {Promise<void>} 取消请求和终态同步完成后结束。
+ */
 async function cancelRun() {
   if (!activeRunId.value || cancelling.value) return
   cancelling.value = true
@@ -441,7 +556,12 @@ async function cancelRun() {
   }
 }
 
-/** @param {object} payload 终态事件或快照。 */
+/**
+ * 统一处理完成、失败和取消终态，并刷新持久化消息与最终轨迹。
+ *
+ * @param {object} payload 终态事件或快照。
+ * @returns {Promise<void>} 最终消息和会话列表刷新完成后结束。
+ */
 async function finishRun(payload) {
   const conversationId = selectedConversationId.value
   closeRunEvents()
@@ -459,7 +579,18 @@ async function finishRun(payload) {
   }
 }
 
-function closeRunEvents() { eventSource?.close(); eventSource = null }
+/** 关闭当前 SSE 连接并释放浏览器资源。 @returns {void} */
+function closeRunEvents() {
+  eventSource?.close()
+  eventSource = null
+}
+
+/**
+ * 清理当前活跃运行状态，并按需保留刚完成的过程轨迹。
+ *
+ * @param {boolean} [clearTrace=true] 是否同时清空工具和公开过程轨迹。
+ * @returns {void}
+ */
 function resetRunState(clearTrace = true) {
   closeRunEvents()
   busy.value = false
@@ -468,21 +599,66 @@ function resetRunState(clearTrace = true) {
   runStatus.value = null
   currentIteration.value = 0
   currentToolName.value = ''
-  if (clearTrace) { toolSteps.value = []; resetLiveRunOutput() }
+  if (clearTrace) {
+    toolSteps.value = []
+    resetLiveRunOutput()
+  }
 }
-function isTerminal(status) { return ['COMPLETED', 'FAILED', 'CANCELLED'].includes(status) }
+
+/**
+ * 判断后端运行状态是否已经不可继续变化。
+ *
+ * @param {string|null} status 运行状态。
+ * @returns {boolean} 完成、失败或取消时为 `true`。
+ */
+function isTerminal(status) {
+  return ['COMPLETED', 'FAILED', 'CANCELLED'].includes(status)
+}
+
+/** @returns {object|null} 刷新前保存的运行定位信息；缺失或损坏时为 `null`。 */
 function readPendingRun() {
   try { return JSON.parse(sessionStorage.getItem(activeRunStorageKey)) } catch { return null }
 }
-function writePendingRun(run) { sessionStorage.setItem(activeRunStorageKey, JSON.stringify(run)) }
-function clearPendingRun() { sessionStorage.removeItem(activeRunStorageKey) }
 
+/** @param {object} run 可用于幂等恢复的运行定位信息。 @returns {void} */
+function writePendingRun(run) {
+  sessionStorage.setItem(activeRunStorageKey, JSON.stringify(run))
+}
+
+/** 删除已经收敛或无法恢复的运行定位信息。 @returns {void} */
+function clearPendingRun() {
+  sessionStorage.removeItem(activeRunStorageKey)
+}
+
+/**
+ * 打开重命名对话框并选中现有标题。
+ *
+ * @param {object} conversation 待重命名会话。
+ * @returns {void}
+ */
 function openRenameDialog(conversation) {
   dialogMode.value = 'rename'; dialogTarget.value = conversation; dialogTitle.value = conversation.title
   nextTick(() => dialogInput.value?.select())
 }
-function openDeleteDialog(conversation) { dialogMode.value = 'delete'; dialogTarget.value = conversation }
-function closeDialog() { dialogMode.value = null; dialogTarget.value = null; dialogTitle.value = '' }
+
+/** @param {object} conversation 待删除会话。 @returns {void} */
+function openDeleteDialog(conversation) {
+  dialogMode.value = 'delete'
+  dialogTarget.value = conversation
+}
+
+/** 清空会话操作对话框状态。 @returns {void} */
+function closeDialog() {
+  dialogMode.value = null
+  dialogTarget.value = null
+  dialogTitle.value = ''
+}
+
+/**
+ * 根据当前对话框模式提交重命名或删除操作。
+ *
+ * @returns {Promise<void>} 操作及会话列表刷新完成后结束。
+ */
 async function confirmDialog() {
   if (!dialogTarget.value) return
   const target = dialogTarget.value

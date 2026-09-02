@@ -81,6 +81,32 @@ class AgentLoopTest {
         assertEquals("{\"echo\":\"hello\"}", secondRequest.get(3).content());
     }
 
+    /** 验证上下文管理器生成的前置滚动摘要会进入真实模型请求。 */
+    @Test
+    void acceptsLeadingConversationMemorySystemMessage() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(DeepSeekMessage.assistant("Done.", null, null), "stop", 3)
+        );
+        List<DeepSeekMessage> history = List.of(
+                DeepSeekMessage.system("Structured historical memory."),
+                DeepSeekMessage.user("Earlier request"),
+                DeepSeekMessage.assistant("Earlier answer", null, null)
+        );
+
+        AgentRunResult result = loop(client, 2, 2).run("Current request", history);
+
+        assertTrue(result.completed());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DeepSeekMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(client).chatStream(messages.capture(), anyList(), any());
+        assertEquals(
+                List.of("system", "system", "user", "assistant", "user"),
+                messages.getValue().stream().map(DeepSeekMessage::role).toList()
+        );
+        assertEquals("Structured historical memory.", messages.getValue().get(1).content());
+    }
+
     /** 验证工具失败可作为消息反馈给模型继续恢复。 */
     @Test
     void feedsToolFailureBackToModelForRecovery() {
@@ -294,6 +320,56 @@ class AgentLoopTest {
         assertTrue(tools.getValue().isEmpty());
         assertTrue(result.completed());
         assertTrue(result.toolSteps().isEmpty());
+    }
+
+    /** 中文任务应在主系统提示词中获得明确的简体中文输出约束。 */
+    @Test
+    void instructsChatResponseToFollowChineseTaskLanguage() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(DeepSeekMessage.assistant("可以使用列表保存这些值。", null, null), "stop", 3)
+        );
+
+        loop(client, 4, 4).runWithoutTools(
+                "应该如何保存这些值？",
+                List.of(),
+                AgentLoopObserver.NONE,
+                AgentRunCancellation.NONE
+        );
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DeepSeekMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(client).chatStream(messages.capture(), anyList(), any());
+        assertTrue(messages.getValue().getFirst().content().contains("Simplified Chinese"));
+    }
+
+    /** 中文任务收到纯英文最终说明时应清除并要求模型重写一次。 */
+    @Test
+    void rewritesEnglishFinalAnswerForChineseTask() {
+        DeepSeekClient client = mock(DeepSeekClient.class);
+        when(client.chatStream(anyList(), anyList(), any())).thenReturn(
+                response(DeepSeekMessage.assistant("Updated the project successfully.", null, null), "stop", 3),
+                response(DeepSeekMessage.assistant("项目已经成功更新。", null, null), "stop", 3)
+        );
+        List<Integer> resets = new java.util.ArrayList<>();
+        AgentLoopObserver observer = new AgentLoopObserver() {
+            @Override
+            public void onAnswerReset(int iteration) {
+                resets.add(iteration);
+            }
+        };
+
+        AgentRunResult result = loop(client, 4, 4).runWithoutTools(
+                "请更新这个项目",
+                List.of(),
+                observer,
+                AgentRunCancellation.NONE
+        );
+
+        assertEquals("项目已经成功更新。", result.answer());
+        assertEquals(2, result.iterations());
+        assertEquals(List.of(1), resets);
+        verify(client, times(2)).chatStream(anyList(), anyList(), any());
     }
 
     /** 验证 CODE 会话不会把未写入项目的代码块直接当作最终成果。 */

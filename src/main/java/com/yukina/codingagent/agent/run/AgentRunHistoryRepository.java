@@ -18,7 +18,9 @@ import java.util.List;
 @Repository
 public class AgentRunHistoryRepository {
 
+    /** 访问 agent_runs 表的 Spring JDBC 模板。 */
     private final JdbcTemplate jdbcTemplate;
+    /** 序列化和反序列化工具轨迹及最终结果的 JSON 映射器。 */
     private final ObjectMapper objectMapper;
 
     /**

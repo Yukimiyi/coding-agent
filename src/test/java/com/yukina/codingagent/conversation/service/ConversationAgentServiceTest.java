@@ -4,12 +4,14 @@ import com.yukina.codingagent.agent.AgentLoop;
 import com.yukina.codingagent.agent.AgentRunResult;
 import com.yukina.codingagent.conversation.memory.ConversationContextManager;
 import com.yukina.codingagent.conversation.memory.ConversationContextProperties;
+import com.yukina.codingagent.conversation.memory.ConversationSummaryService;
 import com.yukina.codingagent.conversation.memory.InMemoryConversationMemoryStore;
 import com.yukina.codingagent.conversation.model.ConversationChatResult;
 import com.yukina.codingagent.conversation.model.ConversationMessage;
 import com.yukina.codingagent.conversation.model.ConversationMode;
 import com.yukina.codingagent.conversation.model.MessagePage;
 import com.yukina.codingagent.conversation.repository.ConversationRepository;
+import com.yukina.codingagent.conversation.repository.ConversationSummaryRepository;
 import com.yukina.codingagent.conversation.workspace.ConversationWorkspaceProperties;
 import com.yukina.codingagent.conversation.workspace.ConversationWorkspaceService;
 import com.yukina.codingagent.deepseek.DeepSeekMessage;
@@ -38,6 +40,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,6 +54,7 @@ class ConversationAgentServiceTest {
     private ConversationService conversationService;
     private ConversationAgentService conversationAgentService;
     private AgentLoop agentLoop;
+    private ConversationSummaryService summaryService;
 
     /** 创建真实会话组件和模拟 Agent 循环。 */
     @BeforeEach
@@ -62,6 +66,7 @@ class ConversationAgentServiceTest {
                 .build();
         JdbcTemplate jdbcTemplate = new JdbcTemplate(database);
         ConversationRepository repository = new ConversationRepository(jdbcTemplate);
+        ConversationSummaryRepository summaryRepository = new ConversationSummaryRepository(jdbcTemplate);
         ConversationContextProperties properties = new ConversationContextProperties(
                 20,
                 1000,
@@ -71,6 +76,7 @@ class ConversationAgentServiceTest {
         );
         ConversationContextManager contextManager = new ConversationContextManager(
                 repository,
+                summaryRepository,
                 new InMemoryConversationMemoryStore(properties),
                 properties
         );
@@ -80,6 +86,7 @@ class ConversationAgentServiceTest {
         workspaceService.initialize();
         conversationService = new ConversationService(repository, contextManager, workspaceService);
         agentLoop = mock(AgentLoop.class);
+        summaryService = mock(ConversationSummaryService.class);
         WorkspaceProperties workspaceProperties = new WorkspaceProperties(
                 workspaceRoot, 1024, 1024, 100, 50, 1024, 5
         );
@@ -87,6 +94,7 @@ class ConversationAgentServiceTest {
                 agentLoop,
                 conversationService,
                 contextManager,
+                summaryService,
                 new ConversationLockManager(),
                 workspaceService,
                 new WorkspaceExecutionContext(workspaceProperties)
@@ -124,6 +132,7 @@ class ConversationAgentServiceTest {
         MessagePage page = conversationService.messages(first.conversationId(), null, 10);
         assertEquals(4, page.messages().size());
         assertEquals("Second answer", page.messages().getLast().content());
+        verify(summaryService, times(2)).compactIfNeeded(first.conversationId());
     }
 
     /** 验证未选择项目时创建纯对话，并使用不带工具的模型循环。 */

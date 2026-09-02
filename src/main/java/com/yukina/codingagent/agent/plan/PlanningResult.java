@@ -17,7 +17,11 @@ public record PlanningResult(
         String notice
 ) {
 
-    /** @throws IllegalArgumentException 计划为空时抛出 */
+    /**
+     * 校验计划并规范化公开说明。
+     *
+     * @throws IllegalArgumentException 计划为空时抛出
+     */
     public PlanningResult {
         if (plan == null) {
             throw new IllegalArgumentException("planning result must contain a plan");

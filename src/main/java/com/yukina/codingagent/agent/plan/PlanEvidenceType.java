@@ -15,8 +15,14 @@ public enum PlanEvidenceType {
     /** Planner 降级时接受任意成功的非计划工具调用。 */
     GENERAL(Set.of());
 
+    /** 可以证明该类步骤完成的工具名称集合。 */
     private final Set<String> toolNames;
 
+    /**
+     * 创建证据类型。
+     *
+     * @param toolNames 可接受的工具名称；空集合表示由类型自行决定
+     */
     PlanEvidenceType(Set<String> toolNames) {
         this.toolNames = toolNames;
     }
