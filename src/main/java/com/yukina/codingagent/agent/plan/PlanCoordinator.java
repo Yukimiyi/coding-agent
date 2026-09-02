@@ -97,7 +97,7 @@ public class PlanCoordinator {
      *
      * @param toolCall update_plan 工具调用
      * @param current 当前不可变计划
-     * @param toolSteps 已产生的真实工具证据
+     * @param toolSteps 当前模型轮次开始前已返回给模型的真实工具证据
      * @return 接受后的新计划或包含拒绝原因的原计划
      */
     public PlanUpdateResult update(
@@ -276,7 +276,9 @@ public class PlanCoordinator {
         return DeepSeekToolDefinition.function(
                 TOOL_NAME,
                 "Request a validated update to the current public execution plan. Send every plan step. Mark a step "
-                        + "COMPLETED only with new successful evidence of the type required by that step. Multiple adjacent "
+                        + "COMPLETED only with new successful evidence already observed in an earlier model turn and of "
+                        + "the type required by that step. Tool calls emitted in the same response are new actions and "
+                        + "cannot support this update. Multiple adjacent "
                         + "steps may advance in one update when each has separate matching evidence. Evidence cannot be "
                         + "reused across steps. Do not call this tool only to repeat the initial statuses; first execute "
                         + "the current IN_PROGRESS step, then submit a real status change. Evidence ids are optional hints; "

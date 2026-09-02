@@ -493,7 +493,7 @@ class AgentLoopTest {
         verifyNoInteractions(reviewer);
     }
 
-    /** 验证 CODE 任务先规划，再通过 update_plan 证据审批后进入 Reflection。 */
+    /** 验证计划更新只使用先前轮次已观察证据，并在下一轮系统提示词中公开最新状态。 */
     @Test
     void executesPlanGuidedReactBeforeReflection() {
         DeepSeekClient client = mock(DeepSeekClient.class);
@@ -523,16 +523,23 @@ class AgentLoopTest {
                 "执行计划已创建"
         ));
         when(client.chatStream(anyList(), anyList(), any())).thenReturn(
-                response(toolMessage(call(
-                        "write_file",
-                        "call-write-plan",
-                        "{\"path\":\"Main.java\",\"content\":\"class Main {}\"}"
+                response(DeepSeekMessage.assistant(null, null, List.of(
+                        call(
+                                "write_file",
+                                "call-write-plan",
+                                "{\"path\":\"Main.java\",\"content\":\"class Main {}\"}"
+                        ),
+                        call(
+                                "update_plan",
+                                "call-plan-update-premature",
+                                "{\"steps\":[{\"id\":\"step-1\",\"status\":\"COMPLETED\"}],"
+                                        + "\"summary\":\"Source file expected to be created\"}"
+                        )
                 )), "tool_calls", 2),
                 response(toolMessage(call(
                         "update_plan",
                         "call-plan-update",
-                        "{\"steps\":[{\"id\":\"step-1\",\"status\":\"COMPLETED\","
-                                + "\"evidenceToolCallIds\":[\"call-write-plan\"]}],"
+                        "{\"steps\":[{\"id\":\"step-1\",\"status\":\"COMPLETED\"}],"
                                 + "\"summary\":\"Source file created\"}"
                 )), "tool_calls", 2),
                 response(DeepSeekMessage.assistant("Created Main.java.", null, null), "stop", 2)
@@ -574,12 +581,22 @@ class AgentLoopTest {
         assertEquals(1, result.reflection().rounds());
         assertEquals(0, result.reflection().revisions());
         assertEquals(List.of("perception", "plan-created:IN_PROGRESS", "plan-updated:COMPLETED"), events);
+        assertEquals(3, result.toolSteps().size());
+        assertTrue(result.toolSteps().getFirst().success());
+        assertFalse(result.toolSteps().get(1).success());
+        assertEquals("PLAN_UPDATE_REJECTED", result.toolSteps().get(1).error().code());
+        assertTrue(result.toolSteps().get(2).success());
         assertEquals(12, result.usage().totalTokens());
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<DeepSeekToolDefinition>> tools = ArgumentCaptor.forClass(List.class);
-        verify(client, times(3)).chatStream(anyList(), tools.capture(), any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DeepSeekMessage>> messages = ArgumentCaptor.forClass(List.class);
+        verify(client, times(3)).chatStream(messages.capture(), tools.capture(), any());
         assertTrue(tools.getAllValues().getFirst().stream()
                 .anyMatch(tool -> "update_plan".equals(tool.function().name())));
+        assertTrue(messages.getAllValues().getFirst().getFirst().content().contains("[IN_PROGRESS] step-1"));
+        assertTrue(messages.getAllValues().get(1).getFirst().content().contains("[IN_PROGRESS] step-1"));
+        assertTrue(messages.getAllValues().get(2).getFirst().content().contains("[COMPLETED] step-1"));
     }
 
     /** 使用测试边界配置创建 Agent 循环。 */

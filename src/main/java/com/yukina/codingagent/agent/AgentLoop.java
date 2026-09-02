@@ -224,6 +224,9 @@ public class AgentLoop {
             safeCancellation.throwIfCancellationRequested();
             safeObserver.onIterationStarted(iteration);
             safeObserver.onProgress(iteration, publicProgressSummary(iteration, toolsEnabled, toolSteps));
+            // The model may update the plan only from observations that were visible when this turn began.
+            List<AgentRunResult.ToolStep> observedToolSteps = List.copyOf(toolSteps);
+            messages.set(0, DeepSeekMessage.system(systemPrompt(toolsEnabled, plan, task)));
             DeepSeekChatResponse response;
             try {
                 int currentIteration = iteration;
@@ -448,7 +451,7 @@ public class AgentLoop {
                 PlanUpdateResult planUpdate = null;
                 ToolExecutionResult executionResult;
                 if (plan != null && PlanCoordinator.TOOL_NAME.equals(toolName)) {
-                    planUpdate = planCoordinator.update(toolCall, plan, List.copyOf(toolSteps));
+                    planUpdate = planCoordinator.update(toolCall, plan, observedToolSteps);
                     plan = planUpdate.plan();
                     executionResult = planUpdate.executionResult();
                 } else {
@@ -641,7 +644,10 @@ public class AgentLoop {
             prompt.append("\n\nPUBLIC EXECUTION PLAN\n")
                     .append(plan.toPrompt())
                     .append("\n\nFollow this plan as a high-level guide while using ReAct to adapt actions to observations. ")
-                    .append("After obtaining tool evidence, call update_plan with every step before moving on. ")
+                    .append("Update the plan only from tool observations already returned in an earlier model turn. ")
+                    .append("Tool calls emitted alongside update_plan are new actions and cannot prove that update. ")
+                    .append("When a prior observation changes a step status, call update_plan before emitting new action ")
+                    .append("tools for the next step. Send every plan step in that update. ")
                     .append("Do not call update_plan at the start merely to announce the existing statuses; execute the ")
                     .append("current IN_PROGRESS step first and submit it only when a status or evidence changes. ")
                     .append("If one tool batch already completed multiple adjacent steps, report all of those real status ")
