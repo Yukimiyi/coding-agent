@@ -17,6 +17,12 @@ if errorlevel 1 exit /b 1
 set "PACKAGE_DIR=target\release-package\coding-agent"
 set "PACKAGE_ZIP=release\coding-agent-windows.zip"
 
+if not exist "release" mkdir "release"
+if errorlevel 1 (
+    echo Cannot create package output directory: release
+    exit /b 1
+)
+
 if exist "%PACKAGE_DIR%" rmdir /s /q "%PACKAGE_DIR%"
 if exist "%PACKAGE_DIR%" (
     echo Cannot clean package staging directory: %PACKAGE_DIR%

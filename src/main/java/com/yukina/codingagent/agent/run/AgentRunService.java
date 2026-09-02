@@ -662,12 +662,13 @@ public class AgentRunService {
             if (state.status.isTerminal()) {
                 return;
             }
-            state.status = AgentRunStatus.COMPLETED;
             state.result = result.withProcessTrace(state.processTrace);
             if (state.liveContent.isEmpty() && result.answer() != null) {
                 state.liveContent.append(result.answer());
             }
             state.finishedAt = Instant.now();
+            // status 是终态发布信号；最后写入可保证无锁读取者同时看到完整终态元数据。
+            state.status = AgentRunStatus.COMPLETED;
             result = state.result;
         }
         persistHistory(state);
@@ -727,9 +728,9 @@ public class AgentRunService {
             if (state.status.isTerminal()) {
                 return;
             }
-            state.status = AgentRunStatus.FAILED;
             state.error = error;
             state.finishedAt = Instant.now();
+            state.status = AgentRunStatus.FAILED;
         }
         persistHistory(state);
         publish(state, AgentRunEventType.FAILED, state.currentIteration, null, null, null, null, null, null, error, null);
@@ -746,9 +747,9 @@ public class AgentRunService {
             if (state.status.isTerminal()) {
                 return;
             }
-            state.status = AgentRunStatus.CANCELLED;
             state.error = "Agent execution cancelled";
             state.finishedAt = Instant.now();
+            state.status = AgentRunStatus.CANCELLED;
         }
         persistHistory(state);
         publish(
@@ -936,7 +937,7 @@ public class AgentRunService {
     private void cleanupRegistry() {
         Instant cutoff = Instant.now().minus(properties.retention());
         List<RunState> removable = runs.values().stream()
-                .filter(state -> state.status.isTerminal())
+                .filter(state -> state.status.isTerminal() && state.finishedAt != null)
                 .sorted(Comparator.comparing(state -> state.finishedAt))
                 .toList();
         for (RunState state : removable) {

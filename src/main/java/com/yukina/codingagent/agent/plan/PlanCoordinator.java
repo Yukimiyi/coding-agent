@@ -282,7 +282,8 @@ public class PlanCoordinator {
                         + "steps may advance in one update when each has separate matching evidence. Evidence cannot be "
                         + "reused across steps. Do not call this tool only to repeat the initial statuses; first execute "
                         + "the current IN_PROGRESS step, then submit a real status change. Evidence ids are optional hints; "
-                        + "the coordinator automatically binds authoritative ids from the real tool trace. A tool failure "
+                        + "the coordinator automatically binds authoritative ids from the real tool trace. Command "
+                        + "evidence is eligible only when execute_command reports exitCode 0 and timedOut false. A tool failure "
                         + "normally remains IN_PROGRESS; "
                         + "use BLOCKED only for a verified external blocker with failed evidence.",
                 Map.of(
@@ -385,7 +386,7 @@ public class PlanCoordinator {
      * @param usedEvidenceIds 已被先前步骤绑定的调用 ID，可被本方法更新
      * @return 选出的完成证据或拒绝原因
      */
-    private static EvidenceSelection selectCompletionEvidence(
+    private EvidenceSelection selectCompletionEvidence(
             List<String> requestedIds,
             Map<String, IndexedEvidence> evidence,
             int evidenceFromToolStep,
@@ -397,9 +398,7 @@ public class PlanCoordinator {
         }
         List<String> eligible = evidence.entrySet().stream()
                 .filter(entry -> entry.getValue().index() >= evidenceFromToolStep)
-                .filter(entry -> entry.getValue().step().success())
-                .filter(entry -> !TOOL_NAME.equals(entry.getValue().step().toolName()))
-                .filter(entry -> evidenceType.accepts(entry.getValue().step().toolName()))
+                .filter(entry -> isSuccessfulCompletionEvidence(entry.getValue().step(), evidenceType))
                 .filter(entry -> !usedEvidenceIds.contains(entry.getKey()))
                 .sorted(Map.Entry.comparingByValue(
                         java.util.Comparator.comparingInt(IndexedEvidence::index)
@@ -407,10 +406,13 @@ public class PlanCoordinator {
                 .map(Map.Entry::getKey)
                 .toList();
         if (eligible.isEmpty()) {
+            String requirement = evidenceType == PlanEvidenceType.VERIFICATION
+                    ? "VERIFICATION evidence with execute_command exitCode 0 and timedOut false"
+                    : "successful " + evidenceType + " evidence";
             return new EvidenceSelection(
                     List.of(),
-                    "COMPLETED requires new successful " + evidenceType
-                            + " evidence produced after the step became IN_PROGRESS"
+                    "COMPLETED requires new " + requirement
+                            + " produced after the step became IN_PROGRESS"
             );
         }
         List<String> distinctRequestedIds = requestedIds.stream().distinct().toList();
@@ -419,6 +421,44 @@ public class PlanCoordinator {
                 : distinctRequestedIds;
         usedEvidenceIds.addAll(selected);
         return new EvidenceSelection(selected, null);
+    }
+
+    /**
+     * 判断真实工具轨迹是否能够证明指定类型的计划步骤已经完成。
+     * 任何作为完成证据的命令都必须确认未超时且退出码为零，GENERAL 兜底步骤也不能绕过该限制。
+     *
+     * @param step 已返回给模型的真实工具调用摘要
+     * @param evidenceType 当前计划步骤要求的证据类型
+     * @return 工具类型和执行结果均满足完成条件时返回 {@code true}
+     */
+    private boolean isSuccessfulCompletionEvidence(
+            AgentRunResult.ToolStep step,
+            PlanEvidenceType evidenceType
+    ) {
+        if (!step.success()
+                || TOOL_NAME.equals(step.toolName())
+                || !evidenceType.accepts(step.toolName())) {
+            return false;
+        }
+        if (!"execute_command".equals(step.toolName())) {
+            return true;
+        }
+        if (step.contentTruncated()
+                || step.content() == null
+                || step.content().isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode result = objectMapper.readTree(step.content());
+            JsonNode exitCode = result.path("exitCode");
+            JsonNode timedOut = result.path("timedOut");
+            return exitCode.isIntegralNumber()
+                    && exitCode.asInt() == 0
+                    && timedOut.isBoolean()
+                    && !timedOut.asBoolean();
+        } catch (JacksonException exception) {
+            return false;
+        }
     }
 
     /**

@@ -87,6 +87,7 @@ class AgentRunServiceTest {
         release.countDown();
         AgentRunSnapshot snapshot = awaitTerminal(first.runId());
         assertEquals(AgentRunStatus.COMPLETED, snapshot.status());
+        assertNotNull(snapshot.finishedAt());
         assertEquals(1, snapshot.toolSteps().size());
         assertEquals("read_file", snapshot.toolSteps().getFirst().toolName());
         assertEquals("Done.", snapshot.liveContent());

@@ -24,6 +24,7 @@ const loadingOlder = ref(false)
 const busy = ref(false)
 const cancelling = ref(false)
 const uploading = ref(false)
+const uploadResult = ref(null)
 const downloading = ref(false)
 const activeRunId = ref(null)
 const runStatus = ref(null)
@@ -127,6 +128,7 @@ async function selectConversation(conversationId) {
   nextCursor.value = null
   hasMoreMessages.value = false
   environmentSnapshot.value = null
+  uploadResult.value = null
   errorMessage.value = ''
   sidebarOpen.value = false
   await loadMessages(conversationId)
@@ -202,6 +204,7 @@ async function submitTask(task) {
   runStatus.value = 'QUEUED'
   currentIteration.value = 0
   currentToolName.value = ''
+  uploadResult.value = null
   errorMessage.value = ''
   toolSteps.value = []
   resetLiveRunOutput()
@@ -246,10 +249,12 @@ async function uploadFiles(files) {
   const conversation = activeConversation.value
   if (!conversation || conversation.mode !== 'CODE' || busy.value || uploading.value) return
   uploading.value = true
+  uploadResult.value = null
   errorMessage.value = ''
   try {
-    await agentApi.uploadConversationFiles(conversation.id, files)
+    const result = await agentApi.uploadConversationFiles(conversation.id, files)
     await refreshConversations()
+    if (conversation.id === selectedConversationId.value) uploadResult.value = result
   } catch (error) {
     errorMessage.value = `上传失败：${error.message}`
   } finally {
@@ -715,6 +720,7 @@ async function confirmDialog() {
         :busy="busy"
         :cancelling="cancelling"
         :uploading="uploading"
+        :upload-result="uploadResult"
         :downloading="downloading"
         :run-status="runStatus"
         :current-iteration="currentIteration"

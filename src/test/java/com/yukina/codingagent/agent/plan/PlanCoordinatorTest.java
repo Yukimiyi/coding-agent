@@ -153,6 +153,105 @@ class PlanCoordinatorTest {
         assertEquals(PlanStepStatus.IN_PROGRESS, result.plan().steps().getFirst().status());
     }
 
+    /** 退出码为零且未超时的命令结果可以证明 VERIFICATION 步骤完成。 */
+    @Test
+    void acceptsSuccessfulCommandVerificationEvidence() {
+        PlanUpdateResult result = coordinator.update(
+                call("call-plan", """
+                        {"steps":[{"id":"step-1","status":"COMPLETED"}],
+                        "summary":"Tests passed"}
+                        """),
+                verificationPlan(),
+                List.of(step(
+                        "call-test",
+                        "execute_command",
+                        true,
+                        "{\"exitCode\":0,\"timedOut\":false,\"stdout\":\"All tests passed\"}",
+                        false,
+                        null
+                ))
+        );
+
+        assertTrue(result.success(), result.executionResult().content());
+        assertEquals(List.of("call-test"), result.plan().steps().getFirst().evidenceToolCallIds());
+    }
+
+    /** 工具正常返回但命令退出码非零时，不能证明 VERIFICATION 步骤完成。 */
+    @Test
+    void rejectsNonZeroCommandAsVerificationEvidence() {
+        PlanUpdateResult result = coordinator.update(
+                call("call-plan", """
+                        {"steps":[{"id":"step-1","status":"COMPLETED"}],
+                        "summary":"Tests passed"}
+                        """),
+                verificationPlan(),
+                List.of(step(
+                        "call-test",
+                        "execute_command",
+                        true,
+                        "{\"exitCode\":1,\"timedOut\":false,\"stderr\":\"tests failed\"}",
+                        false,
+                        null
+                ))
+        );
+
+        assertFalse(result.success());
+        assertTrue(result.executionResult().error().message().contains("exitCode 0"));
+    }
+
+    /** 超时命令即使工具调用本身成功，也不能证明 VERIFICATION 步骤完成。 */
+    @Test
+    void rejectsTimedOutCommandAsVerificationEvidence() {
+        PlanUpdateResult result = coordinator.update(
+                call("call-plan", """
+                        {"steps":[{"id":"step-1","status":"COMPLETED"}],
+                        "summary":"Tests passed"}
+                        """),
+                verificationPlan(),
+                List.of(step(
+                        "call-test",
+                        "execute_command",
+                        true,
+                        "{\"exitCode\":null,\"timedOut\":true}",
+                        false,
+                        null
+                ))
+        );
+
+        assertFalse(result.success());
+        assertTrue(result.executionResult().error().message().contains("timedOut false"));
+    }
+
+    /** GENERAL 兜底计划也不能把非零退出命令当作成功完成证据。 */
+    @Test
+    void rejectsNonZeroCommandForGeneralFallbackPlan() {
+        AgentPlan fallback = new AgentPlan(
+                "Fallback",
+                List.of(new PlanStep(
+                        "step-1", "Complete task", "obtain observable evidence", PlanEvidenceType.GENERAL,
+                        PlanStepStatus.IN_PROGRESS, 0, List.of(), null
+                )),
+                List.of("Task completed")
+        );
+        PlanUpdateResult result = coordinator.update(
+                call("call-plan", """
+                        {"steps":[{"id":"step-1","status":"COMPLETED"}],
+                        "summary":"Task completed"}
+                        """),
+                fallback,
+                List.of(step(
+                        "call-command",
+                        "execute_command",
+                        true,
+                        "{\"exitCode\":2,\"timedOut\":false}",
+                        false,
+                        null
+                ))
+        );
+
+        assertFalse(result.success());
+    }
+
     /** 明确的命令缺失证据允许申请 ENVIRONMENT_MISSING 阻塞。 */
     @Test
     void acceptsSupportedExternalBlocker() {
@@ -381,6 +480,18 @@ class PlanCoordinatorTest {
         );
     }
 
+    /** 创建一个等待真实命令成功证据的验证计划。 */
+    private static AgentPlan verificationPlan() {
+        return new AgentPlan(
+                "Verify tests",
+                List.of(new PlanStep(
+                        "step-1", "Run tests", "command exits zero", PlanEvidenceType.VERIFICATION,
+                        PlanStepStatus.IN_PROGRESS, 0, List.of(), null
+                )),
+                List.of("Tests pass")
+        );
+    }
+
     /** 创建 update_plan 工具调用。 */
     private static DeepSeekToolCall call(String id, String arguments) {
         return new DeepSeekToolCall(
@@ -397,8 +508,20 @@ class PlanCoordinatorTest {
             boolean success,
             ToolExecutionResult.Error error
     ) {
+        return step(id, name, success, "{}", false, error);
+    }
+
+    /** 创建一条带指定结构化结果和截断状态的工具证据。 */
+    private static AgentRunResult.ToolStep step(
+            String id,
+            String name,
+            boolean success,
+            String content,
+            boolean contentTruncated,
+            ToolExecutionResult.Error error
+    ) {
         return new AgentRunResult.ToolStep(
-                1, id, name, "{}", false, success, "{}", false, error
+                1, id, name, "{}", false, success, content, contentTruncated, error
         );
     }
 }

@@ -768,7 +768,7 @@ public class AgentLoop {
      * @param iteration 当前一基轮次
      * @param reflectionRounds 已执行反思次数
      * @param toolSteps 当前工具轨迹
-     * @return 满足一次性反思触发条件时返回 {@code true}
+     * @return 当前轮满足反思触发条件且未达到配置上限时返回 {@code true}
      */
     private boolean shouldReflect(
             boolean toolsEnabled,

@@ -21,6 +21,7 @@ import {
 } from 'lucide-vue-next'
 import MessageContent from './MessageContent.vue'
 import ProcessTimeline from './ProcessTimeline.vue'
+import { hasAgentArtifact } from '../artifact.js'
 
 const props = defineProps({
   conversation: { type: Object, default: null },
@@ -31,6 +32,7 @@ const props = defineProps({
   busy: Boolean,
   cancelling: Boolean,
   uploading: Boolean,
+  uploadResult: { type: Object, default: null },
   downloading: Boolean,
   runStatus: { type: String, default: null },
   currentIteration: { type: Number, default: 0 },
@@ -49,6 +51,8 @@ const draft = ref('')
 const composer = ref(null)
 const fileInput = ref(null)
 const folderInput = ref(null)
+/** 最近一次成功任务是否实际修改过当前项目。 */
+const agentArtifactAvailable = computed(() => hasAgentArtifact(props.conversation, props.latestRun))
 /** 最近一条助手消息 ID，用于只在最终回答后展示对应执行记录。 */
 const latestAssistantId = computed(() => {
   const assistantMessages = props.messages.filter((message) => message.role === 'ASSISTANT')
@@ -122,6 +126,19 @@ function resultCheckSummary(reflection) {
   if (!reflection.revisions) return '结果检查通过'
   return `经 ${reflection.revisions} 次检查修正后完成`
 }
+
+/**
+ * 将上传字节数格式化为适合紧凑状态栏展示的容量。
+ *
+ * @param {number} bytes 上传文件总字节数。
+ * @returns {string} 以 B、KB 或 MB 表示的容量。
+ */
+function formatUploadSize(bytes) {
+  const size = Number(bytes) || 0
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
 </script>
 
 <template>
@@ -148,7 +165,7 @@ function resultCheckSummary(reflection) {
           v-if="conversation?.mode === 'CODE'"
           class="icon-button"
           type="button"
-          :title="conversation.artifactAvailable ? '下载完整项目' : '项目中还没有文件'"
+          :title="conversation.artifactAvailable ? '下载当前项目' : '项目中还没有文件'"
           :disabled="busy || uploading || downloading || !conversation.artifactAvailable"
           @click="emit('download')"
         ><LoaderCircle v-if="downloading" :size="18" class="spin" /><Download v-else :size="18" /></button>
@@ -240,13 +257,21 @@ function resultCheckSummary(reflection) {
       </div>
     </section>
 
-    <div v-if="conversation?.mode === 'CODE' && conversation.artifactAvailable && !busy" class="artifact-strip">
+    <div v-if="agentArtifactAvailable && !busy" class="artifact-strip">
       <CheckCircle2 :size="16" />
-      <span>当前项目已可交付</span>
-      <button type="button" :disabled="downloading" @click="emit('download')"><Download :size="15" />下载完整项目</button>
+      <span>项目修改结果可下载</span>
+      <button type="button" :disabled="downloading" @click="emit('download')"><Download :size="15" />下载修改结果</button>
     </div>
 
     <footer v-if="conversation" class="composer-region">
+      <div v-if="uploading || uploadResult" class="upload-feedback" role="status" aria-live="polite">
+        <LoaderCircle v-if="uploading" :size="15" class="spin" />
+        <CheckCircle2 v-else :size="15" />
+        <span v-if="uploading">正在上传文件</span>
+        <span v-else>
+          已上传 {{ uploadResult.importedFiles }} 个文件 · {{ formatUploadSize(uploadResult.totalBytes) }}，可以开始描述任务
+        </span>
+      </div>
       <div class="composer" :class="{ busy }">
         <div v-if="conversation.mode === 'CODE'" class="composer-tools">
           <input ref="fileInput" hidden type="file" multiple @change="emitFiles" />

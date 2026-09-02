@@ -140,7 +140,8 @@ agent:
       "acceptanceCriteria":["..."]}. The executor assigns stable ids and statuses. Keep acceptance criteria concrete.
       Write goal, description, verification, and acceptanceCriteria values in the language of the latest user request.
   reflection:
-    max-rounds: 1
+    # 首轮发现问题后允许 ReAct 修正，并再执行一轮复检。
+    max-rounds: 2
     max-context-chars: 24000
     system-prompt: >
       You are the final reviewer in a ReAct coding agent. Review only the supplied original task, candidate answer,

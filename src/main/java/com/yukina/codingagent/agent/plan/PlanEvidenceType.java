@@ -10,7 +10,7 @@ public enum PlanEvidenceType {
     INSPECTION(Set.of("read_file", "list_files", "search_text")),
     /** 写入、精确修改或删除项目文件。 */
     MUTATION(Set.of("write_file", "edit_file", "delete_file")),
-    /** 通过命令执行编译、测试或其他可观察验证。 */
+    /** 通过退出码为零且未超时的命令执行证明编译、测试或其他验证成功。 */
     VERIFICATION(Set.of("execute_command")),
     /** Planner 降级时接受任意成功的非计划工具调用。 */
     GENERAL(Set.of());

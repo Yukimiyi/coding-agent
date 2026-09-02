@@ -1183,6 +1183,31 @@ textarea:focus-visible {
   background: var(--surface);
 }
 
+.upload-feedback {
+  display: flex;
+  width: min(820px, 100%);
+  min-height: 28px;
+  align-items: center;
+  gap: 7px;
+  margin: 0 auto 7px;
+  padding: 5px 9px;
+  border: 1px solid #bcd9ce;
+  border-radius: 6px;
+  color: #245f4d;
+  font-size: 11px;
+  background: #f0f8f5;
+}
+
+.upload-feedback svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.upload-feedback span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .composer {
   display: flex;
   width: min(820px, 100%);
